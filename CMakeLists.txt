@@ -85,3 +85,16 @@ target_link_libraries(GHSFXScanner PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+if(APPLE)
+    # AU hosting (JUCE_PLUGINHOST_AU) needs these - juce_add_plugin() links
+    # them automatically for plugin targets, but a plain console app doesn't
+    # get them for free.
+    target_link_libraries(GHSFXScanner PRIVATE
+        "-framework CoreAudioKit"
+        "-framework AudioToolbox"
+        "-framework AudioUnit"
+        "-framework CoreAudio"
+        "-framework CoreMIDI"
+    )
+endif()

@@ -8,7 +8,7 @@ namespace
 }
 
 GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
-    : juce::AudioProcessorEditor(&p), processor(p)
+    : juce::AudioProcessorEditor(&p), ghsProcessor(p)
 {
     addAndMakeVisible(pluginListBox);
 
@@ -90,7 +90,7 @@ void GHSFXCompanionEditor::listBoxItemDoubleClicked(int row, const juce::MouseEv
 
 void GHSFXCompanionEditor::refreshPluginList()
 {
-    foundPlugins = processor.loadKnownPlugins();
+    foundPlugins = ghsProcessor.loadKnownPlugins();
     pluginListBox.updateContent();
 
     if (foundPlugins.isEmpty())
@@ -112,7 +112,7 @@ void GHSFXCompanionEditor::loadSelectedPlugin()
     auto description = foundPlugins.getReference(row);
     statusLabel.setText("Loading " + description.name + "...", juce::dontSendNotification);
 
-    processor.loadHostedPlugin(description, [this, description](const juce::String& error)
+    ghsProcessor.loadHostedPlugin(description, [this, description](const juce::String& error)
     {
         if (error.isNotEmpty())
         {
@@ -129,7 +129,7 @@ void GHSFXCompanionEditor::showHostedPluginEditor()
 {
     closeHostedPluginEditorWindow();
 
-    auto* hosted = processor.getHostedPlugin();
+    auto* hosted = ghsProcessor.getHostedPlugin();
     if (hosted == nullptr)
         return;
 

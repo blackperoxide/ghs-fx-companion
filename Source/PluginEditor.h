@@ -30,7 +30,7 @@ private:
     void showHostedPluginEditor();
     void closeHostedPluginEditorWindow();
 
-    GHSFXCompanionProcessor& processor;
+    GHSFXCompanionProcessor& ghsProcessor;
 
     juce::Array<juce::PluginDescription> foundPlugins;
 
