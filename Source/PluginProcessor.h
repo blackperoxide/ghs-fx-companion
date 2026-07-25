@@ -43,8 +43,12 @@ public:
     // --- Hosting ---
     juce::AudioPluginFormatManager& getFormatManager() { return formatManager; }
 
-    /** Scans the standard plugin install locations for this OS and returns what it found. */
-    juce::Array<juce::PluginDescription> scanForPlugins();
+    /**
+     * Reads the plugin list cache written by the standalone GHSFXScanner app.
+     * Never scans/instantiates anything itself - see PluginScanning.h for why.
+     * Returns empty if the scanner hasn't been run yet.
+     */
+    juce::Array<juce::PluginDescription> loadKnownPlugins();
 
     /** Async - loads the chosen plugin and swaps it in once ready, on the message thread. */
     void loadHostedPlugin(const juce::PluginDescription& description,

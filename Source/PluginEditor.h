@@ -25,7 +25,7 @@ public:
     void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override;
 
 private:
-    void scanForPlugins();
+    void refreshPluginList();
     void loadSelectedPlugin();
     void showHostedPluginEditor();
     void closeHostedPluginEditorWindow();
@@ -35,7 +35,7 @@ private:
     juce::Array<juce::PluginDescription> foundPlugins;
 
     juce::ListBox pluginListBox { "Available Plugins", this };
-    juce::TextButton scanButton { "Scan for Plugins" };
+    juce::TextButton scanButton { "Refresh Plugin List" };
     juce::TextButton loadButton { "Load Selected" };
     juce::Label statusLabel;
 

@@ -12,18 +12,21 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 {
     addAndMakeVisible(pluginListBox);
 
-    scanButton.onClick = [this] { scanForPlugins(); };
+    scanButton.onClick = [this] { refreshPluginList(); };
     addAndMakeVisible(scanButton);
 
     loadButton.onClick = [this] { loadSelectedPlugin(); };
     addAndMakeVisible(loadButton);
 
-    statusLabel.setText("No plugin loaded. Click \"Scan for Plugins\" to begin.", juce::dontSendNotification);
+    statusLabel.setText("Run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
+                         juce::dontSendNotification);
     statusLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(statusLabel);
 
     setResizable(true, true);
     setSize(kDefaultWidth, kDefaultHeight);
+
+    refreshPluginList();
 }
 
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
@@ -85,12 +88,16 @@ void GHSFXCompanionEditor::listBoxItemDoubleClicked(int row, const juce::MouseEv
     loadSelectedPlugin();
 }
 
-void GHSFXCompanionEditor::scanForPlugins()
+void GHSFXCompanionEditor::refreshPluginList()
 {
-    statusLabel.setText("Scanning...", juce::dontSendNotification);
-    foundPlugins = processor.scanForPlugins();
+    foundPlugins = processor.loadKnownPlugins();
     pluginListBox.updateContent();
-    statusLabel.setText(juce::String(foundPlugins.size()) + " plugin(s) found.", juce::dontSendNotification);
+
+    if (foundPlugins.isEmpty())
+        statusLabel.setText("No plugin list yet - run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
+                             juce::dontSendNotification);
+    else
+        statusLabel.setText(juce::String(foundPlugins.size()) + " plugin(s) available.", juce::dontSendNotification);
 }
 
 void GHSFXCompanionEditor::loadSelectedPlugin()

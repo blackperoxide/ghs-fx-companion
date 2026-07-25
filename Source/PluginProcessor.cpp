@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PluginScanning.h"
 
 GHSFXCompanionProcessor::GHSFXCompanionProcessor()
     : AudioProcessor(BusesProperties()
@@ -34,10 +35,16 @@ void GHSFXCompanionProcessor::releaseResources()
 
 bool GHSFXCompanionProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // Milestone 1: stereo in/out only. Hosted plugins with other layouts
-    // (e.g. drum synths with multi-out) are a later problem.
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto mainIn = layouts.getMainInputChannelSet();
+    const auto mainOut = layouts.getMainOutputChannelSet();
+
+    // Milestone 1: mono or stereo, input matching output. Covers DI/vocal/mono
+    // tracks as well as stereo busses. Hosted plugins that change channel count
+    // (e.g. mono-in/stereo-out widening) are a later problem.
+    const bool isMonoToMono = mainIn == juce::AudioChannelSet::mono() && mainOut == juce::AudioChannelSet::mono();
+    const bool isStereoToStereo = mainIn == juce::AudioChannelSet::stereo() && mainOut == juce::AudioChannelSet::stereo();
+
+    return isMonoToMono || isStereoToStereo;
 }
 
 void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -56,27 +63,13 @@ juce::AudioProcessorEditor* GHSFXCompanionProcessor::createEditor()
     return new GHSFXCompanionEditor(*this);
 }
 
-juce::Array<juce::PluginDescription> GHSFXCompanionProcessor::scanForPlugins()
+juce::Array<juce::PluginDescription> GHSFXCompanionProcessor::loadKnownPlugins()
 {
     juce::Array<juce::PluginDescription> found;
 
-    for (auto* format : formatManager.getFormats())
-    {
-        juce::FileSearchPath searchPath = format->getDefaultLocationsToSearch();
-        auto filesOrIdentifiers = format->searchPathsForPlugins(searchPath, true, true);
-
-        for (auto& fileOrIdentifier : filesOrIdentifiers)
-        {
-            juce::OwnedArray<juce::PluginDescription> typesFound;
-            format->findAllTypesForFile(typesFound, fileOrIdentifier);
-
-            for (auto* description : typesFound)
-            {
-                found.add(*description);
-                knownPlugins.addType(*description);
-            }
-        }
-    }
+    knownPlugins.clear();
+    if (GHSPluginScanning::loadCachedList(knownPlugins))
+        found = knownPlugins.getTypes();
 
     return found;
 }
@@ -154,9 +147,9 @@ void GHSFXCompanionProcessor::setStateInformation(const void* data, int sizeInBy
     juce::String base64State = state.getProperty("hostedPluginState").toString();
     pendingHostedPluginState.fromBase64Encoding(base64State);
 
-    // Re-scan and match by identifier string, then reload with the saved state.
+    // Match by identifier string against the cached list, then reload with the saved state.
     // (Reopening a saved Logic session needs this to bring the hosted plugin back.)
-    for (auto& description : scanForPlugins())
+    for (auto& description : loadKnownPlugins())
     {
         if (description.createIdentifierString() == identifier)
         {

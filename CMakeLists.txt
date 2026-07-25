@@ -36,6 +36,7 @@ juce_add_plugin(GHSFXCompanion
 target_sources(GHSFXCompanion PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/PluginScanning.cpp
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC
@@ -50,6 +51,34 @@ target_compile_definitions(GHSFXCompanion PUBLIC
 
 target_link_libraries(GHSFXCompanion PRIVATE
     juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_gui_basics
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
+
+# Standalone scanner - NOT a plugin, run manually outside Logic. This is the
+# isolation boundary: it's the only thing allowed to actually instantiate
+# installed plugins to query them, so a crash there never touches Logic.
+# See Source/PluginScanning.h for why this split exists.
+juce_add_console_app(GHSFXScanner
+    PRODUCT_NAME "GHS FX Companion Scanner"
+)
+
+target_sources(GHSFXScanner PRIVATE
+    Source/ScannerMain.cpp
+    Source/PluginScanning.cpp
+)
+
+target_compile_definitions(GHSFXScanner PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
+)
+
+target_link_libraries(GHSFXScanner PRIVATE
     juce::juce_audio_processors
     juce::juce_gui_basics
     juce::juce_recommended_config_flags
