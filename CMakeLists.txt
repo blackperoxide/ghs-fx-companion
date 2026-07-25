@@ -1,0 +1,58 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(GHSFXCompanion VERSION 0.1.0)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+FetchContent_Declare(
+  JUCE
+  GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+  GIT_TAG 8.0.4
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(JUCE)
+
+# Milestone 1: host a single third-party VST3/AU plugin and pass real audio
+# through it. No chain, no AI matching yet - just prove the hosting mechanism
+# works before building anything on top of it.
+juce_add_plugin(GHSFXCompanion
+    COMPANY_NAME "Grand Healing Studio"
+    BUNDLE_ID "com.grandhealingstudio.ghsfxcompanion"
+    PLUGIN_MANUFACTURER_CODE Ghst
+    PLUGIN_CODE Ghs1
+    FORMATS VST3 AU
+    PRODUCT_NAME "GHS FX Companion"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    VST3_CATEGORIES Fx
+    AU_MAIN_TYPE kAudioUnitType_Effect
+)
+
+target_sources(GHSFXCompanion PRIVATE
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+)
+
+target_compile_definitions(GHSFXCompanion PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    # Lets our own plugin host other plugins inside itself (VST3 always available;
+    # AU hosting only compiles on macOS, guarded in code with JUCE_MAC).
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
+)
+
+target_link_libraries(GHSFXCompanion PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_gui_basics
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
