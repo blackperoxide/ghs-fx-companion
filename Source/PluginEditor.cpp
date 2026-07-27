@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "PluginScanning.h"
 
 namespace
 {
@@ -94,10 +95,19 @@ void GHSFXCompanionEditor::refreshPluginList()
     pluginListBox.updateContent();
 
     if (foundPlugins.isEmpty())
+    {
         statusLabel.setText("No plugin list yet - run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
                              juce::dontSendNotification);
-    else
-        statusLabel.setText(juce::String(foundPlugins.size()) + " plugin(s) available.", juce::dontSendNotification);
+        return;
+    }
+
+    auto lastScan = GHSPluginScanning::getLastScanTime();
+    juce::String scanInfo;
+    if (lastScan != juce::Time())
+        scanInfo = " - last scanned " + (juce::Time::getCurrentTime() - lastScan).getApproximateDescription() + " ago";
+
+    statusLabel.setText(juce::String(foundPlugins.size()) + " plugin(s) available" + scanInfo + ".",
+                         juce::dontSendNotification);
 }
 
 void GHSFXCompanionEditor::loadSelectedPlugin()

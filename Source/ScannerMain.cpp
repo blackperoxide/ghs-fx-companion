@@ -6,9 +6,10 @@
  * own, outside Logic, whenever you want to (re)build the plugin list.
  *
  * Two modes:
- *  - No arguments: does the full scan, re-invoking itself once per plugin
- *    file (see --scan-one below) so a crash in any one plugin only skips
- *    that plugin instead of losing the whole scan.
+ *  - No arguments: does the full scan (skipping anything unchanged since last
+ *    time), running several plugins at once, re-invoking itself once per
+ *    plugin file (see --scan-one below) so a crash in any one plugin only
+ *    skips that plugin instead of losing the whole scan.
  *  - --scan-one <formatName> <fileOrIdentifier>: scans exactly one plugin
  *    file and prints its description(s) to stdout. This is the only mode
  *    that actually instantiates a third-party plugin - if it crashes here,
@@ -30,12 +31,29 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    std::cout << "GHS FX Companion Scanner - scanning installed VST3/AU plugins..." << std::endl;
-    std::cout << "(each plugin is probed in its own throwaway process - if one crashes, it's"
-                  " skipped and the scan keeps going)" << std::endl;
+    std::cout << "GHS FX Companion Scanner" << std::endl;
+    std::cout << "Scanning installed VST3/AU plugins - unchanged ones since your last run are"
+                  " skipped, and several are probed at once to keep this quick." << std::endl;
+    std::cout << "Each plugin is probed in its own throwaway process - if one crashes, it's"
+                  " skipped and the scan keeps going." << std::endl;
 
     auto selfPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getFullPathName();
-    GHSPluginScanning::performFullScanAndSaveCache(formatManager, selfPath);
+
+    GHSPluginScanning::performFullScanAndSaveCache(formatManager, selfPath,
+        [](int completed, int total, const juce::String& currentIdentifier)
+        {
+            if (total == 0)
+                return;
+
+            auto asFile = juce::File(currentIdentifier);
+            auto label = asFile.exists() ? asFile.getFileName() : currentIdentifier;
+
+            std::cout << "\rScanning " << completed << "/" << total << ": " << label.toStdString()
+                      << std::string(24, ' ') << std::flush;
+
+            if (completed == total)
+                std::cout << std::endl;
+        });
 
     std::cout << "Done. Results saved to: "
               << GHSPluginScanning::getCacheFile().getFullPathName() << std::endl;
