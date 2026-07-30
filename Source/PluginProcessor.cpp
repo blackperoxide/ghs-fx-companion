@@ -8,7 +8,8 @@ GHSFXCompanionProcessor::GHSFXCompanionProcessor()
                           .withOutput("Output", juce::AudioChannelSet::stereo(), true))
 {
     formatManager.addDefaultFormats();
-    addParameter(bypassParam = new juce::AudioParameterBool("bypass", "Bypass Hosted Plugin", false));
+    addParameter(bypassParam = new juce::AudioParameterBool(
+        { "bypass", 1 }, "Bypass Hosted Plugin", false));
 }
 
 GHSFXCompanionProcessor::~GHSFXCompanionProcessor()
