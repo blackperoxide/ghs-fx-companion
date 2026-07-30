@@ -8,6 +8,7 @@ GHSFXCompanionProcessor::GHSFXCompanionProcessor()
                           .withOutput("Output", juce::AudioChannelSet::stereo(), true))
 {
     formatManager.addDefaultFormats();
+    addParameter(bypassParam = new juce::AudioParameterBool("bypass", "Bypass Hosted Plugin", false));
 }
 
 GHSFXCompanionProcessor::~GHSFXCompanionProcessor()
@@ -51,7 +52,7 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 {
     juce::ScopedNoDenormals noDenormals;
 
-    if (hostedPlugin != nullptr)
+    if (hostedPlugin != nullptr && !bypassParam->get())
     {
         hostedPlugin->processBlock(buffer, midiMessages);
     }
@@ -120,6 +121,7 @@ void GHSFXCompanionProcessor::unloadHostedPlugin()
 void GHSFXCompanionProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     juce::ValueTree state("GHSFXCompanionState");
+    state.setProperty("bypass", bypassParam->get(), nullptr);
 
     if (hostedPlugin != nullptr)
     {
@@ -139,6 +141,9 @@ void GHSFXCompanionProcessor::setStateInformation(const void* data, int sizeInBy
     auto state = juce::ValueTree::readFromData(data, (size_t) sizeInBytes);
     if (!state.isValid())
         return;
+
+    if (state.hasProperty("bypass"))
+        *bypassParam = (bool) state.getProperty("bypass");
 
     auto identifier = state.getProperty("hostedPluginIdentifier").toString();
     if (identifier.isEmpty())

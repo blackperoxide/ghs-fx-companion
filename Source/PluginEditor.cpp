@@ -4,7 +4,7 @@
 namespace
 {
     constexpr int kTopBarHeight = 110;
-    constexpr int kDefaultWidth = 520;
+    constexpr int kDefaultWidth = 560;
     constexpr int kDefaultHeight = 420;
 }
 
@@ -18,6 +18,10 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 
     loadButton.onClick = [this] { loadSelectedPlugin(); };
     addAndMakeVisible(loadButton);
+
+    bypassButton.setToggleState(ghsProcessor.getBypassParameter()->get(), juce::dontSendNotification);
+    bypassButton.onClick = [this] { bypassButtonClicked(); };
+    addAndMakeVisible(bypassButton);
 
     statusLabel.setText("Run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
                          juce::dontSendNotification);
@@ -49,6 +53,8 @@ void GHSFXCompanionEditor::resized()
     scanButton.setBounds(buttonRow.removeFromLeft(160));
     buttonRow.removeFromLeft(8);
     loadButton.setBounds(buttonRow.removeFromLeft(160));
+    buttonRow.removeFromLeft(8);
+    bypassButton.setBounds(buttonRow.removeFromLeft(160));
 
     topBar.removeFromTop(4);
     statusLabel.setBounds(topBar.removeFromTop(20));
@@ -163,4 +169,11 @@ void GHSFXCompanionEditor::closeHostedPluginEditorWindow()
 {
     hostedEditor.reset();
     hostedEditorHolder.reset();
+}
+
+void GHSFXCompanionEditor::bypassButtonClicked()
+{
+    auto* param = ghsProcessor.getBypassParameter();
+    *param = !param->get();
+    bypassButton.setToggleState(param->get(), juce::dontSendNotification);
 }

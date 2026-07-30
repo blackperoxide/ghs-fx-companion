@@ -29,6 +29,7 @@ private:
     void loadSelectedPlugin();
     void showHostedPluginEditor();
     void closeHostedPluginEditorWindow();
+    void bypassButtonClicked();
 
     GHSFXCompanionProcessor& ghsProcessor;
 
@@ -37,6 +38,7 @@ private:
     juce::ListBox pluginListBox { "Available Plugins", this };
     juce::TextButton scanButton { "Refresh Plugin List" };
     juce::TextButton loadButton { "Load Selected" };
+    juce::ToggleButton bypassButton { "Bypass Hosted Plugin" };
     juce::Label statusLabel;
 
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;

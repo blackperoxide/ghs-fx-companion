@@ -58,12 +58,22 @@ public:
 
     juce::AudioPluginInstance* getHostedPlugin() const { return hostedPlugin.get(); }
 
+    /**
+     * Quick A/B toggle for the hosted plugin specifically - separate from Logic's
+     * own insert-level bypass (the power button on the channel strip), which
+     * bypasses this whole AU. This just skips the hosted plugin's processBlock,
+     * so you can compare wet/dry without unloading it.
+     */
+    juce::AudioParameterBool* getBypassParameter() const { return bypassParam; }
+
 private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
 
     std::unique_ptr<juce::AudioPluginInstance> hostedPlugin;
     juce::MemoryBlock pendingHostedPluginState;
+
+    juce::AudioParameterBool* bypassParam = nullptr;
 
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
