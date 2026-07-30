@@ -87,7 +87,7 @@ void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& de
         description,
         currentSampleRate,
         currentBlockSize,
-        [this, onComplete](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
+        [this, onComplete, pluginName = description.name](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
         {
             if (instance == nullptr)
             {
@@ -99,10 +99,30 @@ void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& de
             unloadHostedPlugin();
 
             hostedPlugin = std::move(instance);
-            hostedPlugin->setPlayConfigDetails(getMainBusNumInputChannels(),
-                                                getMainBusNumOutputChannels(),
-                                                currentSampleRate,
-                                                currentBlockSize);
+
+            const auto requiredIns = getMainBusNumInputChannels();
+            const auto requiredOuts = getMainBusNumOutputChannels();
+
+            // setPlayConfigDetails() only jassert()s on failure - a no-op in release
+            // builds - so a plugin that can't actually match our bus layout (e.g. a
+            // stereo-only plugin hosted on a mono track) would otherwise be left half
+            // negotiated and silently used anyway, feeding it a buffer with fewer
+            // channels than it thinks it has. Confirmed this is what let a stereo-only
+            // plugin get "loaded" onto a mono track and then crash creating its editor.
+            hostedPlugin->setPlayConfigDetails(requiredIns, requiredOuts, currentSampleRate, currentBlockSize);
+
+            if (hostedPlugin->getTotalNumInputChannels() != requiredIns
+                || hostedPlugin->getTotalNumOutputChannels() != requiredOuts)
+            {
+                hostedPlugin.reset();
+
+                if (onComplete)
+                    onComplete(pluginName + " doesn't support "
+                               + (requiredIns == 1 ? juce::String("mono") : juce::String("stereo"))
+                               + " tracks.");
+                return;
+            }
+
             hostedPlugin->prepareToPlay(currentSampleRate, currentBlockSize);
 
             if (onComplete)
