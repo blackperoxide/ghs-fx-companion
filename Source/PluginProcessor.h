@@ -63,8 +63,13 @@ public:
      * own insert-level bypass (the power button on the channel strip), which
      * bypasses this whole AU. This just skips the hosted plugin's processBlock,
      * so you can compare wet/dry without unloading it.
+     *
+     * Deliberately NOT named getBypassParameter() - that's a real virtual on
+     * juce::AudioProcessor that hosts use to wire their own native bypass UI
+     * to a parameter. Colliding with it would merge Logic's own bypass button
+     * with this one, which is the opposite of what this is for.
      */
-    juce::AudioParameterBool* getBypassParameter() const { return bypassParam; }
+    juce::AudioParameterBool* getHostedBypassParameter() const { return bypassParam; }
 
 private:
     juce::AudioPluginFormatManager formatManager;

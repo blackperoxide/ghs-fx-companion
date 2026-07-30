@@ -19,7 +19,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     loadButton.onClick = [this] { loadSelectedPlugin(); };
     addAndMakeVisible(loadButton);
 
-    bypassButton.setToggleState(ghsProcessor.getBypassParameter()->get(), juce::dontSendNotification);
+    bypassButton.setToggleState(ghsProcessor.getHostedBypassParameter()->get(), juce::dontSendNotification);
     bypassButton.onClick = [this] { bypassButtonClicked(); };
     addAndMakeVisible(bypassButton);
 
@@ -173,7 +173,7 @@ void GHSFXCompanionEditor::closeHostedPluginEditorWindow()
 
 void GHSFXCompanionEditor::bypassButtonClicked()
 {
-    auto* param = ghsProcessor.getBypassParameter();
+    auto* param = ghsProcessor.getHostedBypassParameter();
     *param = !param->get();
     bypassButton.setToggleState(param->get(), juce::dontSendNotification);
 }
