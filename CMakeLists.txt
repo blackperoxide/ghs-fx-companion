@@ -23,6 +23,10 @@ juce_add_plugin(GHSFXCompanion
     PLUGIN_MANUFACTURER_CODE Ghst
     PLUGIN_CODE Ghs1
     FORMATS VST3 AU
+    # Without this, every rebuild only updates the copy inside build/ - Logic
+    # never sees it and keeps running whatever was last copied to the system
+    # plugin folders by hand.
+    COPY_PLUGIN_AFTER_BUILD TRUE
     PRODUCT_NAME "GHS FX Companion"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
