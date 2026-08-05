@@ -34,7 +34,10 @@ juce_add_plugin(GHSFXCompanion
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES Fx
-    AU_MAIN_TYPE kAudioUnitType_Effect
+    # MusicEffect (not plain Effect) - this AU wants MIDI in/out, and aumf is
+    # the AU type for that; declaring MIDI I/O under aufx is what auval warned
+    # about (MusicDeviceMIDIEvent implemented on a type that shouldn't have it).
+    AU_MAIN_TYPE kAudioUnitType_MusicEffect
 )
 
 target_sources(GHSFXCompanion PRIVATE
