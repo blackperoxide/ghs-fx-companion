@@ -2,19 +2,36 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
 
+namespace
+{
+    bool isValidSlot(int slotIndex)
+    {
+        return juce::isPositiveAndBelow(slotIndex, GHSFXCompanionProcessor::maxChainSlots);
+    }
+}
+
 GHSFXCompanionProcessor::GHSFXCompanionProcessor()
     : AudioProcessor(BusesProperties()
                           .withInput("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput("Output", juce::AudioChannelSet::stereo(), true))
 {
     formatManager.addDefaultFormats();
-    addParameter(bypassParam = new juce::AudioParameterBool(
-        { "bypass", 1 }, "Bypass Hosted Plugin", false));
+
+    for (int i = 0; i < maxChainSlots; ++i)
+    {
+        auto* param = new juce::AudioParameterBool(
+            { "slotBypass" + juce::String(i), 1 },
+            "Slot " + juce::String(i + 1) + " Bypass",
+            false);
+        addParameter(param);
+        chain[(size_t) i].bypassParam = param;
+    }
 }
 
 GHSFXCompanionProcessor::~GHSFXCompanionProcessor()
 {
-    unloadHostedPlugin();
+    for (int i = 0; i < maxChainSlots; ++i)
+        unloadSlot(i);
 }
 
 void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -22,17 +39,21 @@ void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
-    if (hostedPlugin != nullptr)
+    for (auto& slot : chain)
     {
-        hostedPlugin->setRateAndBufferSizeDetails(sampleRate, samplesPerBlock);
-        hostedPlugin->prepareToPlay(sampleRate, samplesPerBlock);
+        if (slot.plugin != nullptr)
+        {
+            slot.plugin->setRateAndBufferSizeDetails(sampleRate, samplesPerBlock);
+            slot.plugin->prepareToPlay(sampleRate, samplesPerBlock);
+        }
     }
 }
 
 void GHSFXCompanionProcessor::releaseResources()
 {
-    if (hostedPlugin != nullptr)
-        hostedPlugin->releaseResources();
+    for (auto& slot : chain)
+        if (slot.plugin != nullptr)
+            slot.plugin->releaseResources();
 }
 
 bool GHSFXCompanionProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -53,11 +74,13 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 {
     juce::ScopedNoDenormals noDenormals;
 
-    if (hostedPlugin != nullptr && !bypassParam->get())
+    // Same buffer threaded through every non-empty, non-bypassed slot in order -
+    // that's the whole chain. Empty slots and bypassed slots are transparent.
+    for (auto& slot : chain)
     {
-        hostedPlugin->processBlock(buffer, midiMessages);
+        if (slot.plugin != nullptr && !slot.bypassParam->get())
+            slot.plugin->processBlock(buffer, midiMessages);
     }
-    // else: pass audio through untouched (buffer already holds the input).
 }
 
 juce::AudioProcessorEditor* GHSFXCompanionProcessor::createEditor()
@@ -76,18 +99,20 @@ juce::Array<juce::PluginDescription> GHSFXCompanionProcessor::loadKnownPlugins()
     return found;
 }
 
-void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& description,
-                                                std::function<void(const juce::String&)> onComplete)
+void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
+                                                  const juce::PluginDescription& description,
+                                                  std::function<void(const juce::String&)> onComplete)
 {
     // Must run on the message thread - createPluginInstanceAsync requires it,
     // and the callback below is guaranteed to also land back on it.
     jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    jassert(isValidSlot(slotIndex));
 
     formatManager.createPluginInstanceAsync(
         description,
         currentSampleRate,
         currentBlockSize,
-        [this, onComplete, pluginName = description.name](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
+        [this, slotIndex, onComplete, pluginName = description.name](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
         {
             if (instance == nullptr)
             {
@@ -96,9 +121,10 @@ void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& de
                 return;
             }
 
-            unloadHostedPlugin();
+            auto& slot = chain[(size_t) slotIndex];
 
-            hostedPlugin = std::move(instance);
+            unloadSlot(slotIndex);
+            slot.plugin = std::move(instance);
 
             const auto requiredIns = getMainBusNumInputChannels();
             const auto requiredOuts = getMainBusNumOutputChannels();
@@ -109,12 +135,12 @@ void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& de
             // negotiated and silently used anyway, feeding it a buffer with fewer
             // channels than it thinks it has. Confirmed this is what let a stereo-only
             // plugin get "loaded" onto a mono track and then crash creating its editor.
-            hostedPlugin->setPlayConfigDetails(requiredIns, requiredOuts, currentSampleRate, currentBlockSize);
+            slot.plugin->setPlayConfigDetails(requiredIns, requiredOuts, currentSampleRate, currentBlockSize);
 
-            if (hostedPlugin->getTotalNumInputChannels() != requiredIns
-                || hostedPlugin->getTotalNumOutputChannels() != requiredOuts)
+            if (slot.plugin->getTotalNumInputChannels() != requiredIns
+                || slot.plugin->getTotalNumOutputChannels() != requiredOuts)
             {
-                hostedPlugin.reset();
+                slot.plugin.reset();
 
                 if (onComplete)
                     onComplete(pluginName + " doesn't support "
@@ -123,34 +149,75 @@ void GHSFXCompanionProcessor::loadHostedPlugin(const juce::PluginDescription& de
                 return;
             }
 
-            hostedPlugin->prepareToPlay(currentSampleRate, currentBlockSize);
+            slot.plugin->prepareToPlay(currentSampleRate, currentBlockSize);
 
             if (onComplete)
                 onComplete({});
         });
 }
 
-void GHSFXCompanionProcessor::unloadHostedPlugin()
+void GHSFXCompanionProcessor::unloadSlot(int slotIndex)
 {
-    if (hostedPlugin != nullptr)
+    jassert(isValidSlot(slotIndex));
+    auto& slot = chain[(size_t) slotIndex];
+
+    if (slot.plugin != nullptr)
     {
-        hostedPlugin->releaseResources();
-        hostedPlugin.reset();
+        slot.plugin->releaseResources();
+        slot.plugin.reset();
     }
+}
+
+void GHSFXCompanionProcessor::moveSlot(int fromIndex, int toIndex)
+{
+    jassert(isValidSlot(fromIndex) && isValidSlot(toIndex));
+    if (fromIndex == toIndex)
+        return;
+
+    auto& from = chain[(size_t) fromIndex];
+    auto& to = chain[(size_t) toIndex];
+
+    std::swap(from.plugin, to.plugin);
+
+    // The bypass parameters themselves keep a fixed identity per slot index (hosts
+    // rely on that), so swap the values they hold rather than the parameter objects.
+    const bool fromBypassed = from.bypassParam->get();
+    *from.bypassParam = to.bypassParam->get();
+    *to.bypassParam = fromBypassed;
+}
+
+juce::AudioPluginInstance* GHSFXCompanionProcessor::getPluginInSlot(int slotIndex) const
+{
+    jassert(isValidSlot(slotIndex));
+    return chain[(size_t) slotIndex].plugin.get();
+}
+
+juce::AudioParameterBool* GHSFXCompanionProcessor::getSlotBypassParameter(int slotIndex) const
+{
+    jassert(isValidSlot(slotIndex));
+    return chain[(size_t) slotIndex].bypassParam;
 }
 
 void GHSFXCompanionProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     juce::ValueTree state("GHSFXCompanionState");
-    state.setProperty("bypass", bypassParam->get(), nullptr);
 
-    if (hostedPlugin != nullptr)
+    for (int i = 0; i < maxChainSlots; ++i)
     {
-        state.setProperty("hostedPluginIdentifier", hostedPlugin->getPluginDescription().createIdentifierString(), nullptr);
+        auto& slot = chain[(size_t) i];
+        if (slot.plugin == nullptr)
+            continue;
+
+        juce::ValueTree slotState("Slot");
+        slotState.setProperty("index", i, nullptr);
+        slotState.setProperty("identifier", slot.plugin->getPluginDescription().createIdentifierString(), nullptr);
+        slotState.setProperty("bypass", slot.bypassParam->get(), nullptr);
 
         juce::MemoryBlock hostedState;
-        hostedPlugin->getStateInformation(hostedState);
-        state.setProperty("hostedPluginState", hostedState.toBase64Encoding(), nullptr);
+        slot.plugin->getStateInformation(hostedState);
+        slotState.setProperty("pluginState", hostedState.toBase64Encoding(), nullptr);
+
+        state.addChild(slotState, -1, nullptr);
     }
 
     juce::MemoryOutputStream stream(destData, true);
@@ -163,29 +230,36 @@ void GHSFXCompanionProcessor::setStateInformation(const void* data, int sizeInBy
     if (!state.isValid())
         return;
 
-    if (state.hasProperty("bypass"))
-        *bypassParam = (bool) state.getProperty("bypass");
+    auto known = loadKnownPlugins();
 
-    auto identifier = state.getProperty("hostedPluginIdentifier").toString();
-    if (identifier.isEmpty())
-        return;
-
-    juce::String base64State = state.getProperty("hostedPluginState").toString();
-    pendingHostedPluginState.fromBase64Encoding(base64State);
-
-    // Match by identifier string against the cached list, then reload with the saved state.
-    // (Reopening a saved Logic session needs this to bring the hosted plugin back.)
-    for (auto& description : loadKnownPlugins())
+    for (const auto& slotState : state)
     {
-        if (description.createIdentifierString() == identifier)
+        const int slotIndex = slotState.getProperty("index", -1);
+        if (!isValidSlot(slotIndex))
+            continue;
+
+        const auto identifier = slotState.getProperty("identifier").toString();
+        if (identifier.isEmpty())
+            continue;
+
+        const bool bypass = slotState.getProperty("bypass", false);
+        auto& slot = chain[(size_t) slotIndex];
+        slot.pendingState.fromBase64Encoding(slotState.getProperty("pluginState").toString());
+
+        // Match by identifier string against the cached list, then reload with the saved state.
+        // (Reopening a saved Logic session needs this to bring every hosted plugin back.)
+        for (auto& description : known)
         {
-            loadHostedPlugin(description, [this](const juce::String& error)
+            if (description.createIdentifierString() != identifier)
+                continue;
+
+            loadPluginIntoSlot(slotIndex, description, [this, slotIndex, bypass](const juce::String& error)
             {
-                if (error.isEmpty() && hostedPlugin != nullptr && pendingHostedPluginState.getSize() > 0)
-                {
-                    hostedPlugin->setStateInformation(pendingHostedPluginState.getData(),
-                                                       (int) pendingHostedPluginState.getSize());
-                }
+                auto& s = chain[(size_t) slotIndex];
+                if (error.isEmpty() && s.plugin != nullptr && s.pendingState.getSize() > 0)
+                    s.plugin->setStateInformation(s.pendingState.getData(), (int) s.pendingState.getSize());
+
+                *s.bypassParam = bypass;
             });
             break;
         }

@@ -1,18 +1,24 @@
 #pragma once
 
+#include <array>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 /**
- * Milestone 1: this processor is itself a real AU/VST3 plugin that Logic loads
- * as one insert slot - but internally it can scan for, load, and run a single
- * other third-party plugin, passing real audio through it. This is the core
- * mechanism every "plugin chain builder" (Snap Heap, StudioRack, Meaw:Chain)
- * is built on. Chaining multiple hosted plugins and AI-driven chain matching
- * come after this works.
+ * Milestone 2: this processor hosts a bounded rack of third-party plugins in
+ * series (a real "chain," not just one plugin) - the mechanism every
+ * "plugin chain builder" (Snap Heap, StudioRack, Blockchain Ultra) is built
+ * on. The rack size is fixed at construction (maxChainSlots) rather than
+ * growing/shrinking at runtime: AU/VST3 hosts cache the parameter list at
+ * load time, so a parameter count that changes later is asking for trouble.
+ * Empty slots are just pass-through - that's how every real competitor in
+ * this category handles an unfilled rack slot too.
  */
 class GHSFXCompanionProcessor : public juce::AudioProcessor
 {
 public:
+    /** Fixed rack size. A slot with no plugin loaded is a no-op pass-through. */
+    static constexpr int maxChainSlots = 8;
+
     GHSFXCompanionProcessor();
     ~GHSFXCompanionProcessor() override;
 
@@ -50,35 +56,40 @@ public:
      */
     juce::Array<juce::PluginDescription> loadKnownPlugins();
 
-    /** Async - loads the chosen plugin and swaps it in once ready, on the message thread. */
-    void loadHostedPlugin(const juce::PluginDescription& description,
-                           std::function<void(const juce::String& errorMessage)> onComplete);
+    /**
+     * Async - loads the chosen plugin into the given rack slot (replacing
+     * whatever was there) and swaps it in once ready, on the message thread.
+     */
+    void loadPluginIntoSlot(int slotIndex,
+                             const juce::PluginDescription& description,
+                             std::function<void(const juce::String& errorMessage)> onComplete);
 
-    void unloadHostedPlugin();
+    void unloadSlot(int slotIndex);
 
-    juce::AudioPluginInstance* getHostedPlugin() const { return hostedPlugin.get(); }
+    /** Swaps two slots' plugins (and their bypass state) in place - the reorder operation. */
+    void moveSlot(int fromIndex, int toIndex);
+
+    juce::AudioPluginInstance* getPluginInSlot(int slotIndex) const;
 
     /**
-     * Quick A/B toggle for the hosted plugin specifically - separate from Logic's
-     * own insert-level bypass (the power button on the channel strip), which
-     * bypasses this whole AU. This just skips the hosted plugin's processBlock,
-     * so you can compare wet/dry without unloading it.
-     *
-     * Deliberately NOT named getBypassParameter() - that's a real virtual on
-     * juce::AudioProcessor that hosts use to wire their own native bypass UI
-     * to a parameter. Colliding with it would merge Logic's own bypass button
-     * with this one, which is the opposite of what this is for.
+     * One bypass parameter per slot, all declared at construction (see the class
+     * comment on why the count can't be dynamic). Skips just that slot's
+     * processBlock - separate from Logic's own insert-level bypass.
      */
-    juce::AudioParameterBool* getHostedBypassParameter() const { return bypassParam; }
+    juce::AudioParameterBool* getSlotBypassParameter(int slotIndex) const;
 
 private:
+    struct ChainSlot
+    {
+        std::unique_ptr<juce::AudioPluginInstance> plugin;
+        juce::AudioParameterBool* bypassParam = nullptr; // owned by the AudioProcessor parameter list
+        juce::MemoryBlock pendingState;
+    };
+
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
 
-    std::unique_ptr<juce::AudioPluginInstance> hostedPlugin;
-    juce::MemoryBlock pendingHostedPluginState;
-
-    juce::AudioParameterBool* bypassParam = nullptr;
+    std::array<ChainSlot, maxChainSlots> chain;
 
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
