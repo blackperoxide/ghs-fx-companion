@@ -4,6 +4,7 @@
 
 namespace
 {
+    constexpr int kTitleBarHeight = 22;
     constexpr int kTopBarHeight = 30;
     constexpr int kPresetBarHeight = 28;
     constexpr int kSearchBarHeight = 24;
@@ -13,7 +14,7 @@ namespace
     constexpr int kListBoxWidth = 220;
     constexpr int kRackHeight = GHSFXCompanionProcessor::maxChainSlots * (kSlotRowHeight + kSlotRowGap);
     constexpr int kDefaultWidth = 660;
-    constexpr int kDefaultHeight = kTopBarHeight + kRowGap + kPresetBarHeight + kRowGap
+    constexpr int kDefaultHeight = kTitleBarHeight + kTopBarHeight + kRowGap + kPresetBarHeight + kRowGap
                                     + kSearchBarHeight + kRowGap + kRackHeight + 32;
 }
 
@@ -47,6 +48,19 @@ GHSFXCompanionEditor::SlotRow::SlotRow(GHSFXCompanionEditor& ownerEditor, int sl
 
     downButton.onClick = [this] { editor.moveSlot(index, 1); };
     addAndMakeVisible(downButton);
+}
+
+void GHSFXCompanionEditor::SlotRow::paint(juce::Graphics& g)
+{
+    // A recessed channel-strip bay behind each row's controls - the console's
+    // module-slot look, distinct from the raised/lit controls sitting on top of it.
+    auto bounds = getLocalBounds().toFloat();
+
+    g.setColour(VintageLookAndFeel::bezelDark.withAlpha(0.6f));
+    g.fillRoundedRectangle(bounds, 2.0f);
+
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    g.drawLine(bounds.getX(), bounds.getY() + 0.5f, bounds.getRight(), bounds.getY() + 0.5f, 1.0f);
 }
 
 void GHSFXCompanionEditor::SlotRow::resized()
@@ -93,6 +107,8 @@ void GHSFXCompanionEditor::SlotRow::refresh()
 GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     : juce::AudioProcessorEditor(&p), ghsProcessor(p)
 {
+    setLookAndFeel(&vintageLookAndFeel);
+
     searchBox.setTextToShowWhenEmpty("Search plugins...", juce::Colours::grey);
     searchBox.onTextChange = [this] { applySearchFilter(); };
     addAndMakeVisible(searchBox);
@@ -133,16 +149,23 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
 {
     closeHostedPluginEditorWindow();
+    setLookAndFeel(nullptr);
 }
 
 void GHSFXCompanionEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    VintageLookAndFeel::drawConsolePanel(g, getLocalBounds().toFloat());
+
+    auto titleBar = getLocalBounds().reduced(8).removeFromTop(kTitleBarHeight);
+    g.setColour(VintageLookAndFeel::cream.withAlpha(0.75f));
+    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.drawText("GHS FX COMPANION", titleBar, juce::Justification::centredLeft);
 }
 
 void GHSFXCompanionEditor::resized()
 {
     auto area = getLocalBounds().reduced(8);
+    area.removeFromTop(kTitleBarHeight);
 
     auto topBar = area.removeFromTop(kTopBarHeight);
     scanButton.setBounds(topBar.removeFromLeft(160));

@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
+#include "VintageLookAndFeel.h"
 
 /**
  * Milestone 2 UI: the scanned-plugin list on the left feeds a fixed rack of
@@ -32,6 +33,7 @@ private:
     public:
         SlotRow(GHSFXCompanionEditor& ownerEditor, int slotIndex);
 
+        void paint(juce::Graphics&) override;
         void resized() override;
 
         /** Pulls current plugin name / bypass state from the processor and repaints. */
@@ -85,6 +87,8 @@ private:
     juce::TextButton deletePresetButton { "Delete Preset" };
 
     juce::OwnedArray<SlotRow> slotRows;
+
+    VintageLookAndFeel vintageLookAndFeel;
 
     int openEditorSlot = -1;
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
