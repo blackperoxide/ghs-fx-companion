@@ -46,6 +46,20 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // --- Named chain presets (separate from the host save/restore above -
+    // see ChainPresets.h) ---
+
+    /** Alphabetically sorted list of saved preset names. */
+    juce::StringArray getChainPresetNames();
+
+    /** Writes the current chain to a named preset file. Returns false on I/O failure. */
+    bool saveChainPreset(const juce::String& name);
+
+    /** Async, like setStateInformation - onComplete fires once every matched slot has finished loading. */
+    void loadChainPreset(const juce::String& name, std::function<void()> onComplete = nullptr);
+
+    bool deleteChainPreset(const juce::String& name);
+
     // --- Hosting ---
     juce::AudioPluginFormatManager& getFormatManager() { return formatManager; }
 
@@ -79,6 +93,12 @@ public:
     juce::AudioParameterBool* getSlotBypassParameter(int slotIndex) const;
 
 private:
+    /** Same shape used by getStateInformation and by named presets - built once, serialized two ways. */
+    juce::ValueTree chainStateToValueTree();
+
+    /** Applies a chain ValueTree (as produced by chainStateToValueTree); async since it loads plugins. */
+    void applyChainStateValueTree(const juce::ValueTree& state, std::function<void()> onAllSlotsLoaded = nullptr);
+
     struct ChainSlot
     {
         std::unique_ptr<juce::AudioPluginInstance> plugin;

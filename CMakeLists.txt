@@ -44,6 +44,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/PluginScanning.cpp
+    Source/ChainPresets.cpp
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC

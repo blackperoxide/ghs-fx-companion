@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "PluginScanning.h"
+#include "ChainPresets.h"
 
 namespace
 {
@@ -198,7 +199,7 @@ juce::AudioParameterBool* GHSFXCompanionProcessor::getSlotBypassParameter(int sl
     return chain[(size_t) slotIndex].bypassParam;
 }
 
-void GHSFXCompanionProcessor::getStateInformation(juce::MemoryBlock& destData)
+juce::ValueTree GHSFXCompanionProcessor::chainStateToValueTree()
 {
     juce::ValueTree state("GHSFXCompanionState");
 
@@ -220,50 +221,106 @@ void GHSFXCompanionProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.addChild(slotState, -1, nullptr);
     }
 
-    juce::MemoryOutputStream stream(destData, true);
-    state.writeToStream(stream);
+    return state;
 }
 
-void GHSFXCompanionProcessor::setStateInformation(const void* data, int sizeInBytes)
+void GHSFXCompanionProcessor::applyChainStateValueTree(const juce::ValueTree& state, std::function<void()> onAllSlotsLoaded)
 {
-    auto state = juce::ValueTree::readFromData(data, (size_t) sizeInBytes);
-    if (!state.isValid())
+    if (!state.isValid() || state.getNumChildren() == 0)
+    {
+        if (onAllSlotsLoaded)
+            onAllSlotsLoaded();
         return;
+    }
 
     auto known = loadKnownPlugins();
+
+    // Loads for every slot in this state run concurrently (each is its own async
+    // createPluginInstanceAsync call); onAllSlotsLoaded fires once every one of
+    // them has called back, whether matched, failed, or skipped.
+    auto remaining = std::make_shared<int>(state.getNumChildren());
+    auto finishOne = [remaining, onAllSlotsLoaded]
+    {
+        if (--(*remaining) <= 0 && onAllSlotsLoaded)
+            onAllSlotsLoaded();
+    };
 
     for (const auto& slotState : state)
     {
         const int slotIndex = slotState.getProperty("index", -1);
-        if (!isValidSlot(slotIndex))
-            continue;
-
         const auto identifier = slotState.getProperty("identifier").toString();
-        if (identifier.isEmpty())
+
+        if (!isValidSlot(slotIndex) || identifier.isEmpty())
+        {
+            finishOne();
             continue;
+        }
 
         const bool bypass = slotState.getProperty("bypass", false);
         auto& slot = chain[(size_t) slotIndex];
         slot.pendingState.fromBase64Encoding(slotState.getProperty("pluginState").toString());
 
         // Match by identifier string against the cached list, then reload with the saved state.
-        // (Reopening a saved Logic session needs this to bring every hosted plugin back.)
+        // (Reopening a saved Logic session, or loading a named preset, needs this to bring
+        // every hosted plugin back.)
+        const juce::PluginDescription* match = nullptr;
         for (auto& description : known)
         {
-            if (description.createIdentifierString() != identifier)
-                continue;
-
-            loadPluginIntoSlot(slotIndex, description, [this, slotIndex, bypass](const juce::String& error)
+            if (description.createIdentifierString() == identifier)
             {
-                auto& s = chain[(size_t) slotIndex];
-                if (error.isEmpty() && s.plugin != nullptr && s.pendingState.getSize() > 0)
-                    s.plugin->setStateInformation(s.pendingState.getData(), (int) s.pendingState.getSize());
-
-                *s.bypassParam = bypass;
-            });
-            break;
+                match = &description;
+                break;
+            }
         }
+
+        if (match == nullptr)
+        {
+            finishOne();
+            continue;
+        }
+
+        loadPluginIntoSlot(slotIndex, *match, [this, slotIndex, bypass, finishOne](const juce::String& error)
+        {
+            auto& s = chain[(size_t) slotIndex];
+            if (error.isEmpty() && s.plugin != nullptr && s.pendingState.getSize() > 0)
+                s.plugin->setStateInformation(s.pendingState.getData(), (int) s.pendingState.getSize());
+
+            *s.bypassParam = bypass;
+            finishOne();
+        });
     }
+}
+
+void GHSFXCompanionProcessor::getStateInformation(juce::MemoryBlock& destData)
+{
+    auto state = chainStateToValueTree();
+    juce::MemoryOutputStream stream(destData, true);
+    state.writeToStream(stream);
+}
+
+void GHSFXCompanionProcessor::setStateInformation(const void* data, int sizeInBytes)
+{
+    applyChainStateValueTree(juce::ValueTree::readFromData(data, (size_t) sizeInBytes));
+}
+
+juce::StringArray GHSFXCompanionProcessor::getChainPresetNames()
+{
+    return GHSChainPresets::listPresetNames();
+}
+
+bool GHSFXCompanionProcessor::saveChainPreset(const juce::String& name)
+{
+    return GHSChainPresets::savePreset(name, chainStateToValueTree());
+}
+
+void GHSFXCompanionProcessor::loadChainPreset(const juce::String& name, std::function<void()> onComplete)
+{
+    applyChainStateValueTree(GHSChainPresets::loadPreset(name), onComplete);
+}
+
+bool GHSFXCompanionProcessor::deleteChainPreset(const juce::String& name)
+{
+    return GHSChainPresets::deletePreset(name);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

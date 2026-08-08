@@ -1,15 +1,20 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
+#include <algorithm>
 
 namespace
 {
-    constexpr int kTopBarHeight = 36;
+    constexpr int kTopBarHeight = 30;
+    constexpr int kPresetBarHeight = 28;
+    constexpr int kSearchBarHeight = 24;
+    constexpr int kRowGap = 6;
     constexpr int kSlotRowHeight = 28;
     constexpr int kSlotRowGap = 2;
     constexpr int kListBoxWidth = 220;
     constexpr int kRackHeight = GHSFXCompanionProcessor::maxChainSlots * (kSlotRowHeight + kSlotRowGap);
     constexpr int kDefaultWidth = 660;
-    constexpr int kDefaultHeight = kTopBarHeight + kRackHeight + 32;
+    constexpr int kDefaultHeight = kTopBarHeight + kRowGap + kPresetBarHeight + kRowGap
+                                    + kSearchBarHeight + kRowGap + kRackHeight + 32;
 }
 
 // ============================== SlotRow ====================================
@@ -88,6 +93,10 @@ void GHSFXCompanionEditor::SlotRow::refresh()
 GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     : juce::AudioProcessorEditor(&p), ghsProcessor(p)
 {
+    searchBox.setTextToShowWhenEmpty("Search plugins...", juce::Colours::grey);
+    searchBox.onTextChange = [this] { applySearchFilter(); };
+    addAndMakeVisible(searchBox);
+
     addAndMakeVisible(pluginListBox);
 
     scanButton.onClick = [this] { refreshPluginList(); };
@@ -95,6 +104,17 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 
     statusLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(statusLabel);
+
+    presetComboBox.setTextWhenNothingSelected("Load Preset...");
+    presetComboBox.setTextWhenNoChoicesAvailable("No saved presets");
+    presetComboBox.onChange = [this] { presetSelected(); };
+    addAndMakeVisible(presetComboBox);
+
+    savePresetButton.onClick = [this] { savePresetClicked(); };
+    addAndMakeVisible(savePresetButton);
+
+    deletePresetButton.onClick = [this] { deletePresetClicked(); };
+    addAndMakeVisible(deletePresetButton);
 
     for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
     {
@@ -107,6 +127,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 
     refreshPluginList();
     refreshAllSlotRows();
+    refreshPresetList();
 }
 
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
@@ -128,7 +149,21 @@ void GHSFXCompanionEditor::resized()
     topBar.removeFromLeft(8);
     statusLabel.setBounds(topBar);
 
-    area.removeFromTop(8);
+    area.removeFromTop(kRowGap);
+
+    auto presetBar = area.removeFromTop(kPresetBarHeight);
+    presetComboBox.setBounds(presetBar.removeFromLeft(200));
+    presetBar.removeFromLeft(8);
+    savePresetButton.setBounds(presetBar.removeFromLeft(110));
+    presetBar.removeFromLeft(8);
+    deletePresetButton.setBounds(presetBar.removeFromLeft(110));
+
+    area.removeFromTop(kRowGap);
+
+    auto searchBar = area.removeFromTop(kSearchBarHeight);
+    searchBox.setBounds(searchBar.removeFromLeft(kListBoxWidth));
+
+    area.removeFromTop(kRowGap);
 
     auto middle = area.removeFromTop(kRackHeight);
     pluginListBox.setBounds(middle.removeFromLeft(kListBoxWidth));
@@ -170,10 +205,16 @@ void GHSFXCompanionEditor::paintListBoxItem(int rowNumber, juce::Graphics& g, in
 
 void GHSFXCompanionEditor::refreshPluginList()
 {
-    foundPlugins = ghsProcessor.loadKnownPlugins();
-    pluginListBox.updateContent();
+    allScannedPlugins = ghsProcessor.loadKnownPlugins();
+    std::sort(allScannedPlugins.begin(), allScannedPlugins.end(),
+              [](const juce::PluginDescription& a, const juce::PluginDescription& b)
+              {
+                  return a.name.compareIgnoreCase(b.name) < 0;
+              });
 
-    if (foundPlugins.isEmpty())
+    applySearchFilter();
+
+    if (allScannedPlugins.isEmpty())
     {
         statusLabel.setText("No plugin list yet - run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
                              juce::dontSendNotification);
@@ -185,9 +226,24 @@ void GHSFXCompanionEditor::refreshPluginList()
     if (lastScan != juce::Time())
         scanInfo = " - last scanned " + (juce::Time::getCurrentTime() - lastScan).getApproximateDescription() + " ago";
 
-    statusLabel.setText(juce::String(foundPlugins.size()) + " plugin(s) available" + scanInfo
+    statusLabel.setText(juce::String(allScannedPlugins.size()) + " plugin(s) available" + scanInfo
                              + ". Select one, then \"Load Selected\" on a chain slot below.",
                          juce::dontSendNotification);
+}
+
+void GHSFXCompanionEditor::applySearchFilter()
+{
+    auto query = searchBox.getText().trim();
+
+    foundPlugins.clear();
+    for (auto& desc : allScannedPlugins)
+    {
+        if (query.isEmpty() || desc.name.containsIgnoreCase(query) || desc.manufacturerName.containsIgnoreCase(query))
+            foundPlugins.add(desc);
+    }
+
+    pluginListBox.deselectAllRows();
+    pluginListBox.updateContent();
 }
 
 void GHSFXCompanionEditor::loadSelectedPluginIntoSlot(int slotIndex)
@@ -298,4 +354,84 @@ void GHSFXCompanionEditor::refreshAllSlotRows()
 {
     for (auto* row : slotRows)
         row->refresh();
+}
+
+void GHSFXCompanionEditor::refreshPresetList()
+{
+    presetComboBox.clear(juce::dontSendNotification);
+
+    int itemId = 1;
+    for (auto& name : ghsProcessor.getChainPresetNames())
+        presetComboBox.addItem(name, itemId++);
+}
+
+void GHSFXCompanionEditor::presetSelected()
+{
+    const auto itemIndex = presetComboBox.getSelectedItemIndex();
+    if (itemIndex < 0)
+        return;
+
+    auto name = presetComboBox.getItemText(itemIndex);
+
+    // Any slot's editor currently open may be about to be replaced or removed.
+    closeHostedPluginEditorWindow();
+
+    statusLabel.setText("Loading preset \"" + name + "\"...", juce::dontSendNotification);
+
+    ghsProcessor.loadChainPreset(name, [this, name]
+    {
+        refreshAllSlotRows();
+        statusLabel.setText("Loaded preset \"" + name + "\".", juce::dontSendNotification);
+    });
+}
+
+void GHSFXCompanionEditor::savePresetClicked()
+{
+    auto* window = new juce::AlertWindow("Save Preset", "Name this chain preset:", juce::MessageBoxIconType::NoIcon);
+    window->addTextEditor("name", "", "Preset name:");
+    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    window->enterModalState(true, juce::ModalCallbackFunction::create([this, window](int result)
+    {
+        std::unique_ptr<juce::AlertWindow> owned(window);
+        if (result != 1)
+            return;
+
+        auto name = owned->getTextEditorContents("name").trim();
+        if (name.isEmpty())
+            return;
+
+        if (ghsProcessor.saveChainPreset(name))
+        {
+            statusLabel.setText("Saved preset \"" + name + "\".", juce::dontSendNotification);
+            refreshPresetList();
+        }
+        else
+        {
+            statusLabel.setText("Failed to save preset \"" + name + "\".", juce::dontSendNotification);
+        }
+    }), false);
+}
+
+void GHSFXCompanionEditor::deletePresetClicked()
+{
+    const auto itemIndex = presetComboBox.getSelectedItemIndex();
+    if (itemIndex < 0)
+    {
+        statusLabel.setText("Select a preset from the dropdown first.", juce::dontSendNotification);
+        return;
+    }
+
+    auto name = presetComboBox.getItemText(itemIndex);
+
+    if (ghsProcessor.deleteChainPreset(name))
+    {
+        statusLabel.setText("Deleted preset \"" + name + "\".", juce::dontSendNotification);
+        refreshPresetList();
+    }
+    else
+    {
+        statusLabel.setText("Failed to delete preset \"" + name + "\".", juce::dontSendNotification);
+    }
 }

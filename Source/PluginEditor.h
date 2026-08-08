@@ -53,6 +53,7 @@ private:
     };
 
     void refreshPluginList();
+    void applySearchFilter();
     void loadSelectedPluginIntoSlot(int slotIndex);
     void removeSlot(int slotIndex);
     void moveSlot(int slotIndex, int direction);
@@ -61,13 +62,27 @@ private:
     void closeHostedPluginEditorWindow();
     void refreshAllSlotRows();
 
+    void refreshPresetList();
+    void presetSelected();
+    void savePresetClicked();
+    void deletePresetClicked();
+
     GHSFXCompanionProcessor& ghsProcessor;
 
+    /** Full scanned list, alphabetically sorted - filtered by searchBox into foundPlugins below. */
+    juce::Array<juce::PluginDescription> allScannedPlugins;
+
+    /** What's actually shown in pluginListBox right now (allScannedPlugins minus the search filter). */
     juce::Array<juce::PluginDescription> foundPlugins;
 
+    juce::TextEditor searchBox;
     juce::ListBox pluginListBox { "Available Plugins", this };
     juce::TextButton scanButton { "Refresh Plugin List" };
     juce::Label statusLabel;
+
+    juce::ComboBox presetComboBox;
+    juce::TextButton savePresetButton { "Save Preset..." };
+    juce::TextButton deletePresetButton { "Delete Preset" };
 
     juce::OwnedArray<SlotRow> slotRows;
 
