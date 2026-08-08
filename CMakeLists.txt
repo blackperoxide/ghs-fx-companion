@@ -46,6 +46,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/PluginScanning.cpp
     Source/ChainPresets.cpp
     Source/VintageLookAndFeel.cpp
+    Source/RecipeImport.cpp
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC

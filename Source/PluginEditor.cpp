@@ -132,6 +132,9 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     deletePresetButton.onClick = [this] { deletePresetClicked(); };
     addAndMakeVisible(deletePresetButton);
 
+    importRecipeButton.onClick = [this] { importRecipeClicked(); };
+    addAndMakeVisible(importRecipeButton);
+
     for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
     {
         auto* row = slotRows.add(new SlotRow(*this, i));
@@ -175,11 +178,13 @@ void GHSFXCompanionEditor::resized()
     area.removeFromTop(kRowGap);
 
     auto presetBar = area.removeFromTop(kPresetBarHeight);
-    presetComboBox.setBounds(presetBar.removeFromLeft(200));
-    presetBar.removeFromLeft(8);
-    savePresetButton.setBounds(presetBar.removeFromLeft(110));
-    presetBar.removeFromLeft(8);
-    deletePresetButton.setBounds(presetBar.removeFromLeft(110));
+    presetComboBox.setBounds(presetBar.removeFromLeft(180));
+    presetBar.removeFromLeft(6);
+    savePresetButton.setBounds(presetBar.removeFromLeft(100));
+    presetBar.removeFromLeft(6);
+    deletePresetButton.setBounds(presetBar.removeFromLeft(100));
+    presetBar.removeFromLeft(14);
+    importRecipeButton.setBounds(presetBar.removeFromLeft(120));
 
     area.removeFromTop(kRowGap);
 
@@ -457,4 +462,76 @@ void GHSFXCompanionEditor::deletePresetClicked()
     {
         statusLabel.setText("Failed to delete preset \"" + name + "\".", juce::dontSendNotification);
     }
+}
+
+void GHSFXCompanionEditor::importRecipeClicked()
+{
+    recipeFileChooser = std::make_unique<juce::FileChooser>(
+        "Import Chain Recipe (.ghsrecipe.json, from the GHS FX Chain Builder website)",
+        juce::File(), "*.json");
+
+    recipeFileChooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this](const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (!file.existsAsFile())
+                return;
+
+            auto known = ghsProcessor.loadKnownPlugins();
+            auto matches = GHSRecipeImport::loadAndMatch(file, known, GHSFXCompanionProcessor::maxChainSlots);
+
+            if (matches.isEmpty())
+            {
+                statusLabel.setText("Couldn't read a recipe from \"" + file.getFileName() + "\".",
+                                     juce::dontSendNotification);
+                return;
+            }
+
+            auto unmatchedNames = std::make_shared<juce::StringArray>();
+            int matchedCount = 0;
+            for (auto& m : matches)
+            {
+                if (m.matched)
+                    ++matchedCount;
+                else
+                    unmatchedNames->add(m.stageName);
+            }
+
+            if (matchedCount == 0)
+            {
+                statusLabel.setText("None of \"" + file.getFileName() + "\"'s plugins were found in your library.",
+                                     juce::dontSendNotification);
+                return;
+            }
+
+            // Any slot's editor currently open may be about to be replaced.
+            closeHostedPluginEditorWindow();
+
+            statusLabel.setText("Importing recipe \"" + file.getFileNameWithoutExtension() + "\"...",
+                                 juce::dontSendNotification);
+
+            auto remaining = std::make_shared<int>(matchedCount);
+            for (int slotIndex = 0; slotIndex < matches.size(); ++slotIndex)
+            {
+                auto& m = matches.getReference(slotIndex);
+                if (!m.matched)
+                    continue;
+
+                ghsProcessor.loadPluginIntoSlot(slotIndex, m.description,
+                    [this, slotIndex, remaining, unmatchedNames](const juce::String&)
+                    {
+                        if (juce::isPositiveAndBelow(slotIndex, slotRows.size()))
+                            slotRows[slotIndex]->refresh();
+
+                        if (--(*remaining) <= 0)
+                        {
+                            auto msg = juce::String("Recipe imported.");
+                            if (!unmatchedNames->isEmpty())
+                                msg += " Not found in your library: " + unmatchedNames->joinIntoString(", ");
+                            statusLabel.setText(msg, juce::dontSendNotification);
+                        }
+                    });
+            }
+        });
 }

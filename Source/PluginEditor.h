@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 #include "VintageLookAndFeel.h"
+#include "RecipeImport.h"
 
 /**
  * Milestone 2 UI: the scanned-plugin list on the left feeds a fixed rack of
@@ -68,6 +69,7 @@ private:
     void presetSelected();
     void savePresetClicked();
     void deletePresetClicked();
+    void importRecipeClicked();
 
     GHSFXCompanionProcessor& ghsProcessor;
 
@@ -85,6 +87,8 @@ private:
     juce::ComboBox presetComboBox;
     juce::TextButton savePresetButton { "Save Preset..." };
     juce::TextButton deletePresetButton { "Delete Preset" };
+    juce::TextButton importRecipeButton { "Import Recipe..." };
+    std::unique_ptr<juce::FileChooser> recipeFileChooser;
 
     juce::OwnedArray<SlotRow> slotRows;
 
