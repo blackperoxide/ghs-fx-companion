@@ -47,6 +47,16 @@ target_sources(GHSFXCompanion PRIVATE
     Source/ChainPresets.cpp
     Source/VintageLookAndFeel.cpp
     Source/RecipeImport.cpp
+    Source/PluginDatabase.cpp
+)
+
+# The same categorized-plugin database the ghs-fx-chain-builder website uses
+# (lib/data/plugin-database.json there) - compiled into the binary so the
+# plugin's own list can show real categories without needing an external file
+# on disk. See Source/PluginDatabase.h.
+juce_add_binary_data(GHSFXCompanionData
+    SOURCES
+        Resources/plugin_database.json
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC
@@ -60,6 +70,7 @@ target_compile_definitions(GHSFXCompanion PUBLIC
 )
 
 target_link_libraries(GHSFXCompanion PRIVATE
+    GHSFXCompanionData
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_gui_basics

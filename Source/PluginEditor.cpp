@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
+#include "PluginDatabase.h"
 #include <algorithm>
 
 namespace
@@ -226,8 +227,12 @@ void GHSFXCompanionEditor::paintListBoxItem(int rowNumber, juce::Graphics& g, in
     if (juce::isPositiveAndBelow(rowNumber, foundPlugins.size()))
     {
         auto& desc = foundPlugins.getReference(rowNumber);
-        g.drawText(desc.name + "  (" + desc.pluginFormatName + ")",
-                    4, 0, width - 8, height, juce::Justification::centredLeft, true);
+        auto text = desc.name + "  (" + desc.pluginFormatName + ")";
+
+        if (auto* dbEntry = GHSPluginDatabase::lookupPlugin(desc.name))
+            text << "  \xe2\x80\x94  " << dbEntry->category; // em dash
+
+        g.drawText(text, 4, 0, width - 8, height, juce::Justification::centredLeft, true);
     }
 }
 
@@ -266,7 +271,24 @@ void GHSFXCompanionEditor::applySearchFilter()
     foundPlugins.clear();
     for (auto& desc : allScannedPlugins)
     {
-        if (query.isEmpty() || desc.name.containsIgnoreCase(query) || desc.manufacturerName.containsIgnoreCase(query))
+        bool matches = query.isEmpty()
+                       || desc.name.containsIgnoreCase(query)
+                       || desc.manufacturerName.containsIgnoreCase(query);
+
+        // Also match category/subcategory/tags from the real plugin database, so
+        // e.g. searching "compressor" surfaces every compressor even if that word
+        // isn't literally in the product name.
+        if (!matches)
+        {
+            if (auto* dbEntry = GHSPluginDatabase::lookupPlugin(desc.name))
+            {
+                matches = dbEntry->category.containsIgnoreCase(query)
+                          || dbEntry->subcategory.containsIgnoreCase(query)
+                          || dbEntry->tags.containsIgnoreCase(query);
+            }
+        }
+
+        if (matches)
             foundPlugins.add(desc);
     }
 
