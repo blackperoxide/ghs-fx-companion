@@ -1,0 +1,100 @@
+{
+  "axes": [
+    {
+      "id": "drive",
+      "label": "Drive",
+      "lowLabel": "Clean",
+      "highLabel": "Driven",
+      "description": "Saturation/distortion intensity and compression hardness - how hard everything is being pushed."
+    },
+    {
+      "id": "brightness",
+      "label": "Brightness",
+      "lowLabel": "Dark",
+      "highLabel": "Bright",
+      "description": "Overall EQ tilt - warm/rolled-off low end vs. present, cutting top end."
+    },
+    {
+      "id": "space",
+      "label": "Space",
+      "lowLabel": "Dry",
+      "highLabel": "Wet",
+      "description": "Reverb/delay wetness - how much room and tail is built into the chain."
+    },
+    {
+      "id": "movement",
+      "label": "Movement",
+      "lowLabel": "Static",
+      "highLabel": "Modulated",
+      "description": "Chorus/phaser/tremolo/filter-sweep depth - how much the sound moves over time."
+    },
+    {
+      "id": "punch",
+      "label": "Punch",
+      "lowLabel": "Squashed",
+      "highLabel": "Punchy",
+      "description": "Transient/dynamic retention - punchy and dynamic vs. dense and compressed flat."
+    },
+    {
+      "id": "width",
+      "label": "Width",
+      "lowLabel": "Narrow",
+      "highLabel": "Wide",
+      "description": "Stereo image - mono/centered vs. wide stereo spread."
+    },
+    {
+      "id": "lofi",
+      "label": "Lo-Fi",
+      "lowLabel": "Hi-Fi",
+      "highLabel": "Lo-Fi",
+      "description": "Textural degradation - pristine/full-bandwidth vs. bitcrushed/tape-noise/vinyl character."
+    }
+  ],
+  "vibeAxisPoints": {
+    "clean-glitch": {
+      "drive": 3,
+      "brightness": 7,
+      "space": 3,
+      "movement": 2,
+      "punch": 8,
+      "width": 5,
+      "lofi": 2
+    },
+    "heavy-glitch": {
+      "drive": 9,
+      "brightness": 6,
+      "space": 4,
+      "movement": 3,
+      "punch": 3,
+      "width": 5,
+      "lofi": 6
+    },
+    "psych-trip-hop": {
+      "drive": 3,
+      "brightness": 3,
+      "space": 8,
+      "movement": 8,
+      "punch": 4,
+      "width": 7,
+      "lofi": 5
+    },
+    "neo-soul-triphop": {
+      "drive": 3,
+      "brightness": 4,
+      "space": 5,
+      "movement": 6,
+      "punch": 5,
+      "width": 5,
+      "lofi": 3
+    },
+    "live-organic": {
+      "drive": 1,
+      "brightness": 5,
+      "space": 2,
+      "movement": 1,
+      "punch": 6,
+      "width": 4,
+      "lofi": 1
+    }
+  }
+}

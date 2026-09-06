@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
 #include "ChainPresets.h"
+#include "ChainAxes.h"
 
 namespace
 {
@@ -40,6 +41,8 @@ void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
+    toneRecorder.prepare(sampleRate, juce::jmax(1, getMainBusNumInputChannels()));
+
     for (auto& slot : chain)
     {
         if (slot.plugin != nullptr)
@@ -74,6 +77,10 @@ bool GHSFXCompanionProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
 void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // Captured before the chain touches it - the point is to characterize the
+    // raw tone arriving on this track, not whatever the rack already does to it.
+    toneRecorder.pushBlock(buffer);
 
     // Same buffer threaded through every non-empty, non-bypassed slot in order -
     // that's the whole chain. Empty slots and bypassed slots are transparent.
@@ -321,6 +328,40 @@ void GHSFXCompanionProcessor::loadChainPreset(const juce::String& name, std::fun
 bool GHSFXCompanionProcessor::deleteChainPreset(const juce::String& name)
 {
     return GHSChainPresets::deletePreset(name);
+}
+
+void GHSFXCompanionProcessor::startToneCapture()
+{
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    toneRecorder.startRecording();
+}
+
+void GHSFXCompanionProcessor::stopToneCaptureAndAnalyze(
+    std::function<void(std::vector<GHSToneRecommendation::SuggestedStage>, juce::String)> onComplete)
+{
+    jassert(juce::MessageManager::getInstance()->isThisTheMessageThread());
+    toneRecorder.stopRecording();
+
+    auto captured = toneRecorder.getCapturedCopy();
+    const double sampleRate = toneRecorder.getSampleRate();
+    auto known = loadKnownPlugins();
+
+    // FFTs and fuzzy-matching every candidate against the known-plugin list are
+    // both too slow for the message thread (would freeze the UI) and not
+    // real-time safe (irrelevant here since we're off the audio thread, but the
+    // point stands - this genuinely needs its own thread).
+    juce::Thread::launch([captured = std::move(captured), sampleRate, known = std::move(known), onComplete]
+    {
+        auto axes = GHSToneAnalyzer::analyze(captured, sampleRate);
+        auto stages = GHSToneRecommendation::recommend(axes, known);
+        auto nearestVibe = GHSChainAxes::nearestVibe(axes);
+
+        juce::MessageManager::callAsync([stages = std::move(stages), nearestVibe, onComplete]() mutable
+        {
+            if (onComplete)
+                onComplete(std::move(stages), nearestVibe);
+        });
+    });
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

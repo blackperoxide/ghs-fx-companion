@@ -1,0 +1,711 @@
+[
+  {
+    "label": "Transient Shaping",
+    "axes": [
+      "punch",
+      "drive"
+    ],
+    "include": {
+      "type": "always"
+    },
+    "variants": [
+      {
+        "id": "transient",
+        "name": "Snap the Attack",
+        "role": "Snap the attack before anything else touches it",
+        "center": {
+          "punch": 8,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "SPL Transient Designer",
+            "tip": "Attack +3-5dB, Sustain neutral. Do this before compression, always."
+          },
+          {
+            "brand": "UAD",
+            "plugin": "API 2500 (fast attack)",
+            "tip": "Attack 3, Release 2 — use as a light transient nudge if you skip SPL."
+          }
+        ]
+      },
+      {
+        "id": "transient",
+        "name": "Exaggerate Before Smashing It",
+        "role": "Exaggerate the hit before you smash it",
+        "center": {
+          "punch": 3,
+          "drive": 9
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "SPL Transient Designer",
+            "tip": "Attack +6-8dB — push hard, you're about to compress it into oblivion anyway."
+          }
+        ]
+      },
+      {
+        "id": "transient",
+        "name": "Soften for the Pocket",
+        "role": "Soften slightly for that laid-back trip-hop pocket",
+        "center": {
+          "punch": 4,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "SPL Transient Designer",
+            "tip": "Attack neutral to -2dB, Sustain +3dB for a rounder, warmer hit."
+          }
+        ]
+      },
+      {
+        "id": "transient",
+        "name": "Round It Off",
+        "role": "Round it off — Questlove pocket lives in a softer, fatter hit, not a sharp click",
+        "center": {
+          "punch": 5,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "SPL Transient Designer",
+            "tip": "Attack -2 to -4dB, Sustain +2-3dB for a fatter, rounder body on kick and snare."
+          }
+        ]
+      },
+      {
+        "id": "transient",
+        "name": "Light Transient Touch",
+        "role": "Keep it natural — you're playing live",
+        "center": {
+          "punch": 6,
+          "drive": 1
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "SPL Transient Designer",
+            "tip": "Very light touch, +1-2dB attack max, just enough to cut through a room mix."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Saturation",
+    "axes": [
+      "drive",
+      "lofi"
+    ],
+    "include": {
+      "type": "any_gte",
+      "checks": [
+        [
+          "drive",
+          3
+        ],
+        [
+          "lofi",
+          3
+        ]
+      ]
+    },
+    "variants": [
+      {
+        "id": "saturation",
+        "name": "Saturation / Grit",
+        "role": "This is the character stage — where 'Deftones drum bus' lives",
+        "center": {
+          "drive": 9,
+          "lofi": 6
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Studer A800 or Ampex ATR-102",
+            "tip": "Drive input +4-6dB for tape compression + harmonic grit before the compressor."
+          },
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "Black Box HG-2",
+            "tip": "Push the input hard for a fuzzy, transistor-saturated top end."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "Kramer Tape",
+            "tip": "Alternative/parallel tape saturation — flutter + wow on for extra wobble."
+          }
+        ]
+      },
+      {
+        "id": "saturation",
+        "name": "Tape Warmth",
+        "role": "The wobble/warp that defines this vibe",
+        "center": {
+          "drive": 3,
+          "lofi": 5
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Ampex ATR-102",
+            "tip": "Drive gently, enable wow/flutter for pitch drift character."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "Kramer Tape",
+            "tip": "Alternative — dial in visible flutter for a hazier, dreamlike wobble."
+          }
+        ]
+      },
+      {
+        "id": "saturation",
+        "name": "Analog Warmth",
+        "role": "Rhodes/tape warmth — the neo-soul half of this chain",
+        "center": {
+          "drive": 3,
+          "lofi": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Ampex ATR-102",
+            "tip": "Gentle drive, light wow/flutter — just enough to feel analog, not obviously warped like the psych-trip-hop chain."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "Kramer Tape",
+            "tip": "Alternative — keep flutter subtle here, this is warmth not wobble."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Bus Compression",
+    "axes": [
+      "punch",
+      "drive"
+    ],
+    "include": {
+      "type": "always"
+    },
+    "variants": [
+      {
+        "id": "compression",
+        "name": "Bus Glue Compression",
+        "role": "Cohere the kit into one punch",
+        "center": {
+          "punch": 8,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "API 2500 Bus Compressor",
+            "tip": "Ratio 2:1, slow attack, auto release, 1-3dB GR."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "SSL G-Master Buss Compressor",
+            "tip": "4:1, medium attack, 2dB GR — the classic 'glue' setting."
+          }
+        ]
+      },
+      {
+        "id": "compression",
+        "name": "Heavy Bus Compression",
+        "role": "Squash it flat, let it breathe/pump",
+        "center": {
+          "punch": 3,
+          "drive": 9
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Waves",
+            "plugin": "CLA-76 (bus mode, blend in parallel)",
+            "tip": "All-buttons-in style, fast attack/release, blend 40-60% wet for NY-compression pump."
+          },
+          {
+            "brand": "UAD",
+            "plugin": "API 2500",
+            "tip": "Ratio 4:1+, fast attack, 6-10dB GR for real pumping."
+          }
+        ]
+      },
+      {
+        "id": "compression",
+        "name": "Glue Compression",
+        "role": "Gentle, musical cohesion — not a squash",
+        "center": {
+          "punch": 4,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Neve 33609",
+            "tip": "2:1, slow attack, auto release, 1-2dB GR — smooth and musical."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "SSL G-Master Buss Compressor",
+            "tip": "Light 2:1 setting if you want a brighter alternative."
+          }
+        ]
+      },
+      {
+        "id": "compression",
+        "name": "Pocket Glue",
+        "role": "Smooth, musical glue that keeps the groove sitting deep in the pocket",
+        "center": {
+          "punch": 5,
+          "drive": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Fairchild 670",
+            "tip": "Slow attack, moderate release, 2-3dB GR — the classic smooth-soul glue compressor."
+          },
+          {
+            "brand": "UAD",
+            "plugin": "Teletronix LA-2A (Silver)",
+            "tip": "Alternative — even smoother, more vintage-soul character, less obviously 'compressed.'"
+          }
+        ]
+      },
+      {
+        "id": "compression",
+        "name": "Gentle Compression",
+        "role": "Control dynamics without squashing feel",
+        "center": {
+          "punch": 6,
+          "drive": 1
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Waves",
+            "plugin": "CLA-76 (light setting, low ratio button)",
+            "tip": "4:1, medium attack, moderate release, 2-3dB GR max."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Tone / EQ",
+    "axes": [
+      "brightness"
+    ],
+    "include": {
+      "type": "always"
+    },
+    "variants": [
+      {
+        "id": "eq",
+        "name": "Tone / EQ",
+        "role": "Shape low-end weight and top-end snap",
+        "center": {
+          "brightness": 7
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "bx_console SSL 4000 E EQ",
+            "tip": "HP at 40Hz, small boost 3-5kHz for stick snap."
+          },
+          {
+            "brand": "FabFilter",
+            "plugin": "Timeless 2 (as static filter)",
+            "tip": "Use only if you don't have a dedicated EQ open — Timeless 2's filter can do a gentle tilt in a pinch."
+          }
+        ]
+      },
+      {
+        "id": "eq",
+        "name": "Aggressive EQ",
+        "role": "Carve space, add aggression",
+        "center": {
+          "brightness": 6
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "bx_console Neve 88RS",
+            "tip": "Boost 2-4kHz hard for snare/click aggression, HP 50-60Hz."
+          },
+          {
+            "brand": "UAD",
+            "plugin": "Helios Type 69",
+            "tip": "Alternative character EQ — musical top-end boost."
+          }
+        ]
+      },
+      {
+        "id": "eq",
+        "name": "Warm Body EQ",
+        "role": "Boost the low-mid body that makes the drums feel 'thick,' not muddy",
+        "center": {
+          "brightness": 4
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "bx_console Neve 88RS",
+            "tip": "Gentle boost 150-250Hz for body, small dip 400Hz to avoid boxiness, soft top-end roll-off above 9kHz."
+          }
+        ]
+      },
+      {
+        "id": "eq",
+        "name": "Tone Shaping",
+        "role": "Warm low-mid, rolled-off harsh highs",
+        "center": {
+          "brightness": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "bx_console SSL 4000 E EQ",
+            "tip": "Gentle low shelf boost ~100Hz, high shelf cut above 10kHz for that dusty trip-hop top end."
+          }
+        ]
+      },
+      {
+        "id": "eq",
+        "name": "EQ for Live Cut-Through",
+        "role": "Carve room for the kit in a live mix",
+        "center": {
+          "brightness": 5
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Plugin Alliance",
+            "plugin": "bx_console Neve 88RS",
+            "tip": "HP 80Hz, gentle presence boost 2-3kHz."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Modulation / Movement",
+    "axes": [
+      "movement",
+      "space"
+    ],
+    "include": {
+      "type": "gte",
+      "axis": "movement",
+      "value": 4
+    },
+    "variants": [
+      {
+        "id": "modulation",
+        "name": "Modulation / Movement",
+        "role": "The psychedelic swirl",
+        "center": {
+          "movement": 8,
+          "space": 8
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Waves",
+            "plugin": "MondoMod",
+            "tip": "Slow, subtle rate — tremolo/phaser blend on parallel bus for a breathing, psychedelic motion."
+          },
+          {
+            "brand": "UAD",
+            "plugin": "Moog Multimode Filter",
+            "tip": "Slow LFO sweep, low resonance, for a filtered dream-wash on toms/percussion."
+          }
+        ]
+      },
+      {
+        "id": "modulation",
+        "name": "Subtle Shimmer",
+        "role": "A whisper of movement — Rhodes-adjacent, not psychedelic-wide",
+        "center": {
+          "movement": 6,
+          "space": 5
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Waves",
+            "plugin": "MondoMod",
+            "tip": "Very low depth, slow rate, chorus-leaning blend on a parallel bus — should be felt, not noticed."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Glitch Send",
+    "axes": [
+      "movement",
+      "lofi"
+    ],
+    "include": {
+      "type": "any_gte",
+      "checks": [
+        [
+          "movement",
+          3
+        ],
+        [
+          "lofi",
+          3
+        ]
+      ]
+    },
+    "variants": [
+      {
+        "id": "glitch-fx",
+        "name": "Glitch Send (subtle)",
+        "role": "One or two stutter/reverse moments per bar, on a send",
+        "center": {
+          "movement": 2,
+          "lofi": 2
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Kilohearts",
+            "plugin": "Stutter",
+            "tip": "One or two short stutter triggers per phrase, tempo-synced, gate mix low (20-35%) so it reads as an accent, not a gimmick."
+          },
+          {
+            "brand": "FabFilter",
+            "plugin": "Timeless 2",
+            "tip": "Backup option — short 1/32-1/16 delay with high feedback, automate the mix in/out to fake a stutter roll if Kilohearts isn't loaded."
+          }
+        ]
+      },
+      {
+        "id": "glitch-fx",
+        "name": "Texture Accent (light touch)",
+        "role": "One glitch moment per section max — texture, not a genre statement",
+        "center": {
+          "movement": 1,
+          "lofi": 1
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Kilohearts",
+            "plugin": "Stutter",
+            "tip": "Very occasional, low mix — a single stutter on a fill into a chorus, not a recurring effect. This chain is about groove, not glitch."
+          }
+        ]
+      },
+      {
+        "id": "glitch-fx",
+        "name": "Glitch / Stutter Send",
+        "role": "Chaotic breaks, reversed hits, filter chokes",
+        "center": {
+          "movement": 8,
+          "lofi": 8
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "Kilohearts",
+            "plugin": "Stutter + Bitcrush (chained)",
+            "tip": "Stutter set to fast/chaotic mode into Bitcrush for a genuinely crushed, bar-synced chaos edit on fills — this is the real deal, not a fake-out."
+          },
+          {
+            "brand": "FabFilter",
+            "plugin": "Timeless 2",
+            "tip": "Backup/parallel layer — extreme feedback + ping-pong + reverse mode for chopped fill moments."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Delay Throws",
+    "axes": [
+      "space",
+      "movement"
+    ],
+    "include": {
+      "type": "gte",
+      "axis": "space",
+      "value": 4
+    },
+    "variants": [
+      {
+        "id": "delay-fx",
+        "name": "Delay Throws",
+        "role": "Three-part transition-style tails (Frank Ocean-esque)",
+        "center": {
+          "space": 7,
+          "movement": 5
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "FabFilter",
+            "plugin": "Timeless 2",
+            "tip": "Dotted-8th ping-pong, moderate feedback, filtered repeats — automate a throw at section transitions."
+          }
+        ]
+      },
+      {
+        "id": "delay-fx",
+        "name": "Delay",
+        "role": "Trip-hop haze layered on top of the foundation",
+        "center": {
+          "space": 4,
+          "movement": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "FabFilter",
+            "plugin": "Timeless 2",
+            "tip": "Dotted-8th, filtered repeats, moderate feedback — same washy-transition move, used more sparingly."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Room / Space",
+    "axes": [
+      "space",
+      "width"
+    ],
+    "include": {
+      "type": "always"
+    },
+    "variants": [
+      {
+        "id": "space",
+        "name": "Room / Space",
+        "role": "Glue the kit into the mix without washing out the transient",
+        "center": {
+          "space": 2,
+          "width": 4
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Capitol Chambers or EMT 140",
+            "tip": "Short pre-delay, 0.8-1.2s decay, low mix (8-15%)."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "H-Reverb",
+            "tip": "Room algorithm, HF damping up, keep it under the transient designer stage in the signal path (post-EQ, parallel send)."
+          }
+        ]
+      },
+      {
+        "id": "space",
+        "name": "Space / Crush",
+        "role": "Lo-fi width and decay",
+        "center": {
+          "space": 4,
+          "width": 6
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "EMT 140 Plate",
+            "tip": "Short decay, high mix on chorus hits only (automate)."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "H-Delay",
+            "tip": "Synced slap-back for aggressive fill tails."
+          }
+        ]
+      },
+      {
+        "id": "space",
+        "name": "Space (Wide, Hazy)",
+        "role": "Wide, hazy, but controlled",
+        "center": {
+          "space": 9,
+          "width": 8
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Capitol Chambers",
+            "tip": "Long-ish decay (1.5-2.5s), heavy pre-delay, low-passed return for a hazy back wall."
+          },
+          {
+            "brand": "Waves",
+            "plugin": "H-Reverb",
+            "tip": "Hall/plate blend, damp highs for warmth."
+          }
+        ]
+      },
+      {
+        "id": "space",
+        "name": "Space (Grounded)",
+        "role": "Warm room, not a hazy wash — keep the groove grounded",
+        "center": {
+          "space": 5,
+          "width": 5
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "Capitol Chambers",
+            "tip": "Shorter decay than a wide wash (0.8-1.4s), moderate pre-delay, low-passed return."
+          }
+        ]
+      },
+      {
+        "id": "space",
+        "name": "Minimal Room",
+        "role": "Just enough space to feel natural outdoors/on stage",
+        "center": {
+          "space": 1,
+          "width": 3
+        },
+        "note": null,
+        "options": [
+          {
+            "brand": "UAD",
+            "plugin": "EMT 140 Plate (low mix)",
+            "tip": "5-10% mix only — for a festival/busking set, less reverb reads clearer outdoors."
+          }
+        ]
+      }
+    ]
+  }
+]

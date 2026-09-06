@@ -14,9 +14,9 @@ namespace
         return s.trim().toLowerCase();
     }
 
-    const juce::PluginDescription* findBestMatch(const juce::String& candidatePlugin,
-                                                  const juce::String& candidateBrand,
-                                                  const juce::Array<juce::PluginDescription>& knownPlugins)
+    const juce::PluginDescription* findBestMatchImpl(const juce::String& candidatePlugin,
+                                                      const juce::String& candidateBrand,
+                                                      const juce::Array<juce::PluginDescription>& knownPlugins)
     {
         auto normCandidate = normalize(candidatePlugin);
         if (normCandidate.isEmpty())
@@ -91,7 +91,7 @@ juce::Array<GHSRecipeImport::MatchedStage> GHSRecipeImport::loadAndMatch(const j
                 auto plugin = candidateObj->getProperty("plugin").toString();
                 auto brand = candidateObj->getProperty("brand").toString();
 
-                if (auto* found = findBestMatch(plugin, brand, knownPlugins))
+                if (auto* found = findBestMatchImpl(plugin, brand, knownPlugins))
                 {
                     stage.matched = true;
                     stage.description = *found;
@@ -104,4 +104,11 @@ juce::Array<GHSRecipeImport::MatchedStage> GHSRecipeImport::loadAndMatch(const j
     }
 
     return results;
+}
+
+const juce::PluginDescription* GHSRecipeImport::findBestMatch(const juce::String& candidatePlugin,
+                                                                const juce::String& candidateBrand,
+                                                                const juce::Array<juce::PluginDescription>& knownPlugins)
+{
+    return findBestMatchImpl(candidatePlugin, candidateBrand, knownPlugins);
 }

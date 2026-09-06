@@ -8,6 +8,7 @@ namespace
     constexpr int kTitleBarHeight = 22;
     constexpr int kTopBarHeight = 30;
     constexpr int kPresetBarHeight = 28;
+    constexpr int kToneBarHeight = 28;
     constexpr int kSearchBarHeight = 24;
     constexpr int kRowGap = 6;
     constexpr int kSlotRowHeight = 28;
@@ -16,6 +17,7 @@ namespace
     constexpr int kRackHeight = GHSFXCompanionProcessor::maxChainSlots * (kSlotRowHeight + kSlotRowGap);
     constexpr int kDefaultWidth = 660;
     constexpr int kDefaultHeight = kTitleBarHeight + kTopBarHeight + kRowGap + kPresetBarHeight + kRowGap
+                                    + kToneBarHeight + kRowGap
                                     + kSearchBarHeight + kRowGap + kRackHeight + 32;
 }
 
@@ -136,6 +138,10 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     importRecipeButton.onClick = [this] { importRecipeClicked(); };
     addAndMakeVisible(importRecipeButton);
 
+    toneRecordButton.setColour(juce::TextButton::buttonColourId, VintageLookAndFeel::redLED.withAlpha(0.35f));
+    toneRecordButton.onClick = [this] { toneRecordButtonClicked(); };
+    addAndMakeVisible(toneRecordButton);
+
     for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
     {
         auto* row = slotRows.add(new SlotRow(*this, i));
@@ -186,6 +192,11 @@ void GHSFXCompanionEditor::resized()
     deletePresetButton.setBounds(presetBar.removeFromLeft(100));
     presetBar.removeFromLeft(14);
     importRecipeButton.setBounds(presetBar.removeFromLeft(120));
+
+    area.removeFromTop(kRowGap);
+
+    auto toneBar = area.removeFromTop(kToneBarHeight);
+    toneRecordButton.setBounds(toneBar.removeFromLeft(200));
 
     area.removeFromTop(kRowGap);
 
@@ -483,6 +494,135 @@ void GHSFXCompanionEditor::deletePresetClicked()
     else
     {
         statusLabel.setText("Failed to delete preset \"" + name + "\".", juce::dontSendNotification);
+    }
+}
+
+void GHSFXCompanionEditor::timerCallback()
+{
+    if (ghsProcessor.isCapturingTone())
+    {
+        toneRecordButton.setButtonText("Stop & Suggest (" + juce::String(ghsProcessor.getToneCaptureSeconds(), 1) + "s)");
+    }
+    else
+    {
+        stopTimer();
+    }
+}
+
+void GHSFXCompanionEditor::toneRecordButtonClicked()
+{
+    if (waitingForToneAnalysis)
+        return; // previous take is still being analyzed - ignore a stray click
+
+    if (ghsProcessor.isCapturingTone())
+    {
+        stopTimer();
+        waitingForToneAnalysis = true;
+        toneRecordButton.setEnabled(false);
+        toneRecordButton.setButtonText("Analyzing...");
+        statusLabel.setText("Analyzing captured audio...", juce::dontSendNotification);
+
+        ghsProcessor.stopToneCaptureAndAnalyze(
+            [this](std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel)
+            {
+                waitingForToneAnalysis = false;
+                toneRecordButton.setEnabled(true);
+                toneRecordButton.setButtonText("Record & Suggest");
+                applyToneSuggestions(std::move(stages), nearestVibeLabel);
+            });
+    }
+    else
+    {
+        ghsProcessor.startToneCapture();
+        toneRecordButton.setButtonText("Stop & Suggest (0.0s)");
+        statusLabel.setText("Recording your input - play a phrase, then click \"Stop & Suggest\".",
+                             juce::dontSendNotification);
+        startTimer(200);
+    }
+}
+
+void GHSFXCompanionEditor::applyToneSuggestions(std::vector<GHSToneRecommendation::SuggestedStage> stages,
+                                                 juce::String nearestVibeLabel)
+{
+    if (stages.empty())
+    {
+        statusLabel.setText("Couldn't get a usable analysis from that take - try recording a longer, louder phrase.",
+                             juce::dontSendNotification);
+        return;
+    }
+
+    juce::Array<int> emptySlots;
+    for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
+        if (ghsProcessor.getPluginInSlot(i) == nullptr)
+            emptySlots.add(i);
+
+    auto notOwned = std::make_shared<juce::StringArray>();
+
+    struct PendingLoad { int slotIndex; juce::PluginDescription description; };
+    std::vector<PendingLoad> toLoad;
+    int slotCursor = 0;
+
+    for (auto& stage : stages)
+    {
+        const GHSToneRecommendation::SuggestedOption* ownedOption = nullptr;
+        for (auto& opt : stage.options)
+        {
+            if (opt.owned) { ownedOption = &opt; break; }
+        }
+
+        if (ownedOption == nullptr)
+        {
+            notOwned->add(stage.name);
+            continue;
+        }
+
+        if (slotCursor >= emptySlots.size())
+        {
+            notOwned->add(stage.name + " (no empty slot left)");
+            continue;
+        }
+
+        toLoad.push_back({ emptySlots[slotCursor++], ownedOption->description });
+    }
+
+    if (toLoad.empty())
+    {
+        juce::String msg = "No owned plugins matched this take's suggested chain (closest preset: " + nearestVibeLabel + ").";
+        if (!notOwned->isEmpty())
+            msg += " Look for: " + notOwned->joinIntoString(", ") + ".";
+        statusLabel.setText(msg, juce::dontSendNotification);
+        return;
+    }
+
+    statusLabel.setText("Loading " + juce::String(toLoad.size()) + " suggested plugin(s) (closest preset: "
+                             + nearestVibeLabel + ")...",
+                         juce::dontSendNotification);
+
+    auto loadedSlots = std::make_shared<juce::StringArray>();
+    auto remaining = std::make_shared<int>((int) toLoad.size());
+
+    for (auto& pending : toLoad)
+    {
+        ghsProcessor.loadPluginIntoSlot(pending.slotIndex, pending.description,
+            [this, slotIndex = pending.slotIndex, remaining, notOwned, loadedSlots, nearestVibeLabel](const juce::String& error)
+            {
+                if (juce::isPositiveAndBelow(slotIndex, slotRows.size()))
+                    slotRows[slotIndex]->refresh();
+
+                if (error.isEmpty())
+                    loadedSlots->add(juce::String(slotIndex + 1));
+                else
+                    notOwned->add("slot " + juce::String(slotIndex + 1) + " (" + error + ")");
+
+                if (--(*remaining) <= 0)
+                {
+                    juce::String msg = juce::String(loadedSlots->size()) + " plugin(s) loaded into slot(s) "
+                                        + loadedSlots->joinIntoString(", ") + " (closest preset: " + nearestVibeLabel + ").";
+                    if (!notOwned->isEmpty())
+                        msg += " Not matched: " + notOwned->joinIntoString(", ") + ".";
+                    statusLabel.setText(msg, juce::dontSendNotification);
+                }
+            });
     }
 }
 

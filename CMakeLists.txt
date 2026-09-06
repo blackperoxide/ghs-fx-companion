@@ -48,15 +48,26 @@ target_sources(GHSFXCompanion PRIVATE
     Source/VintageLookAndFeel.cpp
     Source/RecipeImport.cpp
     Source/PluginDatabase.cpp
+    Source/ChainAxes.cpp
+    Source/DrumChainVariants.cpp
+    Source/ToneAnalyzer.cpp
+    Source/ToneRecommendation.cpp
 )
 
-# The same categorized-plugin database the ghs-fx-chain-builder website uses
-# (lib/data/plugin-database.json there) - compiled into the binary so the
-# plugin's own list can show real categories without needing an external file
-# on disk. See Source/PluginDatabase.h.
+# plugin_database.json: the same categorized real-plugin database the
+# ghs-fx-chain-builder website uses (lib/data/plugin-database.json there).
+# axis_config.json / drum_stage_variants.json: the same 7-axis model and
+# per-stage variant content as that web app's lib/chain-axes.ts and
+# lib/drum-chain-variants.ts, generated from those files (see the export
+# script referenced in Source/ChainAxes.cpp / DrumChainVariants.cpp) so this
+# plugin's "record and suggest" feature and the web app's prompt matcher can
+# never drift onto different data. All compiled into the binary so none of
+# it depends on an external file on disk.
 juce_add_binary_data(GHSFXCompanionData
     SOURCES
         Resources/plugin_database.json
+        Resources/axis_config.json
+        Resources/drum_stage_variants.json
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC
@@ -73,6 +84,7 @@ target_link_libraries(GHSFXCompanion PRIVATE
     GHSFXCompanionData
     juce::juce_audio_utils
     juce::juce_audio_processors
+    juce::juce_dsp
     juce::juce_gui_basics
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

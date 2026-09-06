@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "VintageLookAndFeel.h"
 #include "RecipeImport.h"
+#include "ToneRecommendation.h"
 
 /**
  * Milestone 2 UI: the scanned-plugin list on the left feeds a fixed rack of
@@ -14,7 +15,8 @@
  * single hosted plugin.
  */
 class GHSFXCompanionEditor : public juce::AudioProcessorEditor,
-                              private juce::ListBoxModel
+                              private juce::ListBoxModel,
+                              private juce::Timer
 {
 public:
     explicit GHSFXCompanionEditor(GHSFXCompanionProcessor&);
@@ -26,6 +28,9 @@ public:
     // --- juce::ListBoxModel ---
     int getNumRows() override;
     void paintListBoxItem(int rowNumber, juce::Graphics&, int width, int height, bool rowIsSelected) override;
+
+    // --- juce::Timer (live "Recording... Ns" label while capturing) ---
+    void timerCallback() override;
 
 private:
     /** One row in the chain rack: load/remove/bypass/reorder/edit for a single slot index. */
@@ -71,6 +76,16 @@ private:
     void deletePresetClicked();
     void importRecipeClicked();
 
+    /**
+     * Toggles capture: first click arms recording of this plugin's raw input
+     * (see GHSFXCompanionProcessor::startToneCapture), second click stops it and
+     * runs analysis + axis-based recommendation in the background. On success,
+     * loads each suggested stage's best owned match into consecutive empty rack
+     * slots - same one-shot "fill the rack" behavior as importRecipeClicked().
+     */
+    void toneRecordButtonClicked();
+    void applyToneSuggestions(std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel);
+
     GHSFXCompanionProcessor& ghsProcessor;
 
     /** Full scanned list, alphabetically sorted - filtered by searchBox into foundPlugins below. */
@@ -89,6 +104,9 @@ private:
     juce::TextButton deletePresetButton { "Delete Preset" };
     juce::TextButton importRecipeButton { "Import Recipe..." };
     std::unique_ptr<juce::FileChooser> recipeFileChooser;
+
+    juce::TextButton toneRecordButton { "Record & Suggest" };
+    bool waitingForToneAnalysis = false;
 
     juce::OwnedArray<SlotRow> slotRows;
 

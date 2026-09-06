@@ -32,4 +32,16 @@ namespace GHSRecipeImport
     juce::Array<MatchedStage> loadAndMatch(const juce::File& recipeFile,
                                             const juce::Array<juce::PluginDescription>& knownPlugins,
                                             int maxSlots);
+
+    /**
+     * The same name/manufacturer fuzzy match loadAndMatch() uses per candidate,
+     * exposed directly so anything else that produces a list of candidate
+     * (brand, plugin name) pairs - e.g. GHSDrumChainVariants' axis-based
+     * suggestions - can check them against what's actually installed without
+     * going through a recipe file. Returns nullptr if nothing matches well
+     * enough (substring match either direction, case-insensitive).
+     */
+    const juce::PluginDescription* findBestMatch(const juce::String& candidatePlugin,
+                                                  const juce::String& candidateBrand,
+                                                  const juce::Array<juce::PluginDescription>& knownPlugins);
 }

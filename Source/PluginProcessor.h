@@ -2,6 +2,8 @@
 
 #include <array>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "ToneAnalyzer.h"
+#include "ToneRecommendation.h"
 
 /**
  * Milestone 2: this processor hosts a bounded rack of third-party plugins in
@@ -92,6 +94,28 @@ public:
      */
     juce::AudioParameterBool* getSlotBypassParameter(int slotIndex) const;
 
+    // --- Tone capture + axis-based recommendation (record what's coming in,
+    // then suggest a chain the same way the web app's prompt matcher would -
+    // see ToneAnalyzer.h / ToneRecommendation.h) ---
+
+    /** Message-thread only. Starts a fresh capture of this plugin's raw input. */
+    void startToneCapture();
+
+    bool isCapturingTone() const { return toneRecorder.isRecording(); }
+    double getToneCaptureSeconds() const { return toneRecorder.getCapturedSeconds(); }
+
+    /**
+     * Message-thread only. Stops capturing and runs analysis + recommendation
+     * on a background thread (FFTs and plugin-list matching are not real-time
+     * safe and are too slow for the message thread too). onComplete is always
+     * called back on the message thread. nearestVibeLabel is one of the 5
+     * original vibe ids, e.g. "heavy-glitch" - just a "closest preset" label,
+     * same as the web app shows for a free-text prompt match.
+     */
+    void stopToneCaptureAndAnalyze(
+        std::function<void(std::vector<GHSToneRecommendation::SuggestedStage> stages,
+                            juce::String nearestVibeLabel)> onComplete);
+
 private:
     /** Same shape used by getStateInformation and by named presets - built once, serialized two ways. */
     juce::ValueTree chainStateToValueTree();
@@ -110,6 +134,8 @@ private:
     juce::KnownPluginList knownPlugins;
 
     std::array<ChainSlot, maxChainSlots> chain;
+
+    GHSToneAnalyzer::Recorder toneRecorder;
 
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
