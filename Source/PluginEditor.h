@@ -1,21 +1,29 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 #include "PluginProcessor.h"
-#include "VintageLookAndFeel.h"
 #include "RecipeImport.h"
 #include "ToneRecommendation.h"
 
 /**
- * Milestone 2 UI: the scanned-plugin list on the left feeds a fixed rack of
- * GHSFXCompanionProcessor::maxChainSlots slot rows on the right - each row
- * loads/removes/bypasses/reorders one link in the chain. Only one hosted
- * plugin's own editor is shown at a time (click "Edit" on a row to swap it
- * in below), same window-management approach as Milestone 1 had for its
- * single hosted plugin.
+ * Web-based UI: the actual interface (plugin browser, rack, presets, record &
+ * suggest) is HTML/CSS/JS served from the Resources/webui folder (embedded
+ * via BinaryData, no network access, no build step) and rendered in a
+ * juce::WebBrowserComponent - real interactive web UI, but the plugin ships
+ * as one self-contained binary with no external process/server.
+ *
+ * Everything the frontend can do goes through a small set of native
+ * functions (withNativeFunction) that call straight into
+ * GHSFXCompanionProcessor; async results and out-of-band events (a live
+ * recording timer, toasts, import/analysis completion) go back to the page
+ * via emitEventIfBrowserIsVisible(). See Resources/webui/app.js for the
+ * matching frontend-side protocol.
+ *
+ * A hosted third-party plugin's own editor is a native juce::Component and
+ * can't live inside the webview, so "Edit" opens it in its own native
+ * juce::DocumentWindow instead.
  */
 class GHSFXCompanionEditor : public juce::AudioProcessorEditor,
-                              private juce::ListBoxModel,
                               private juce::Timer
 {
 public:
@@ -25,96 +33,72 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
-    // --- juce::ListBoxModel ---
-    int getNumRows() override;
-    void paintListBoxItem(int rowNumber, juce::Graphics&, int width, int height, bool rowIsSelected) override;
-
-    // --- juce::Timer (live "Recording... Ns" label while capturing) ---
-    void timerCallback() override;
-
 private:
-    /** One row in the chain rack: load/remove/bypass/reorder/edit for a single slot index. */
-    class SlotRow : public juce::Component
-    {
-    public:
-        SlotRow(GHSFXCompanionEditor& ownerEditor, int slotIndex);
+    void timerCallback() override; // emits "toneCaptureTick" while recording
 
-        void paint(juce::Graphics&) override;
-        void resized() override;
+    std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url);
 
-        /** Pulls current plugin name / bypass state from the processor and repaints. */
-        void refresh();
+    juce::var handleGetState();
+    juce::var handleSearchPlugins(const juce::Array<juce::var>& args);
+    void handleLoadPluginIntoSlot(const juce::Array<juce::var>& args,
+                                   juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    juce::var handleUnloadSlot(const juce::Array<juce::var>& args);
+    juce::var handleMoveSlot(const juce::Array<juce::var>& args);
+    juce::var handleToggleBypass(const juce::Array<juce::var>& args);
+    juce::var handleRefreshPluginScan();
+    void handleSavePreset(const juce::Array<juce::var>& args,
+                           juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    void handleLoadPreset(const juce::Array<juce::var>& args,
+                           juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    juce::var handleDeletePreset(const juce::Array<juce::var>& args);
+    void handleImportRecipe();
+    void handleStartToneCapture();
+    void handleStopToneCaptureAndAnalyze(juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    void handleOpenHostedEditor(const juce::Array<juce::var>& args);
 
-    private:
-        GHSFXCompanionEditor& editor;
-        int index;
-
-        juce::Label slotLabel;
-        juce::ToggleButton bypassButton { "Bypass" };
-        juce::TextButton loadButton { "Load Selected" };
-        juce::TextButton removeButton { "Remove" };
-        juce::TextButton editButton { "Edit" };
-        juce::TextButton upButton { "Up" };
-        juce::TextButton downButton { "Down" };
-
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SlotRow)
-    };
-
-    void refreshPluginList();
-    void applySearchFilter();
-    void loadSelectedPluginIntoSlot(int slotIndex);
-    void removeSlot(int slotIndex);
-    void moveSlot(int slotIndex, int direction);
-    void toggleSlotEditor(int slotIndex);
-    void showHostedPluginEditor(int slotIndex);
-    void closeHostedPluginEditorWindow();
-    void refreshAllSlotRows();
-
-    void refreshPresetList();
-    void presetSelected();
-    void savePresetClicked();
-    void deletePresetClicked();
-    void importRecipeClicked();
-
-    /**
-     * Toggles capture: first click arms recording of this plugin's raw input
-     * (see GHSFXCompanionProcessor::startToneCapture), second click stops it and
-     * runs analysis + axis-based recommendation in the background. On success,
-     * loads each suggested stage's best owned match into consecutive empty rack
-     * slots - same one-shot "fill the rack" behavior as importRecipeClicked().
-     */
-    void toneRecordButtonClicked();
-    void applyToneSuggestions(std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel);
+    const juce::PluginDescription* findKnownPluginByIdentifier(const juce::String& identifier);
+    void emitToast(const juce::String& text, const juce::String& tone = "info");
 
     GHSFXCompanionProcessor& ghsProcessor;
 
-    /** Full scanned list, alphabetically sorted - filtered by searchBox into foundPlugins below. */
+    struct SinglePageBrowser : juce::WebBrowserComponent
+    {
+        using WebBrowserComponent::WebBrowserComponent;
+
+        // We only ever navigate to our own embedded resource root - refuse
+        // anything else (there are no external links in this UI, but a
+        // right-click "reload"/history action on some backends could try).
+        bool pageAboutToLoad(const juce::String& newURL) override
+        {
+            return newURL == getResourceProviderRoot();
+        }
+    };
+
+    /** A DocumentWindow whose close button just runs a callback - used for a hosted plugin's own editor. */
+    struct HostedEditorWindow : juce::DocumentWindow
+    {
+        HostedEditorWindow(const juce::String& name, std::function<void()> onClose)
+            : juce::DocumentWindow(name, juce::Colours::black, juce::DocumentWindow::closeButton),
+              closeCallback(std::move(onClose))
+        {
+        }
+
+        void closeButtonPressed() override { closeCallback(); }
+
+        std::function<void()> closeCallback;
+    };
+
+    // Built in the constructor body (not as a default member initialiser) since
+    // its Options need lambdas capturing `this`, which isn't valid yet in an
+    // in-class initialiser.
+    std::unique_ptr<SinglePageBrowser> webView;
+
+    std::unique_ptr<HostedEditorWindow> hostedEditorWindow;
+
+    /** Refreshed on construction and whenever the frontend asks for a rescan. */
     juce::Array<juce::PluginDescription> allScannedPlugins;
 
-    /** What's actually shown in pluginListBox right now (allScannedPlugins minus the search filter). */
-    juce::Array<juce::PluginDescription> foundPlugins;
-
-    juce::TextEditor searchBox;
-    juce::ListBox pluginListBox { "Available Plugins", this };
-    juce::TextButton scanButton { "Refresh Plugin List" };
-    juce::Label statusLabel;
-
-    juce::ComboBox presetComboBox;
-    juce::TextButton savePresetButton { "Save Preset..." };
-    juce::TextButton deletePresetButton { "Delete Preset" };
-    juce::TextButton importRecipeButton { "Import Recipe..." };
     std::unique_ptr<juce::FileChooser> recipeFileChooser;
-
-    juce::TextButton toneRecordButton { "Record & Suggest" };
-    bool waitingForToneAnalysis = false;
-
-    juce::OwnedArray<SlotRow> slotRows;
-
-    VintageLookAndFeel vintageLookAndFeel;
-
-    int openEditorSlot = -1;
-    std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
-    std::unique_ptr<juce::Component> hostedEditorHolder;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)
 };

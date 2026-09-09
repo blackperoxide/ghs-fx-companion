@@ -38,6 +38,11 @@ juce_add_plugin(GHSFXCompanion
     # the AU type for that; declaring MIDI I/O under aufx is what auval warned
     # about (MusicDeviceMIDIEvent implemented on a type that shouldn't have it).
     AU_MAIN_TYPE kAudioUnitType_MusicEffect
+    # The UI is a real HTML/CSS/JS webview (Resources/webui/*), not hand-drawn
+    # JUCE components - this links webkit2gtk on Linux (JUCE runs it in a
+    # helper subprocess for plugin targets automatically). No effect on macOS/
+    # Windows, which use WKWebView/WebView2 without needing this.
+    NEEDS_WEB_BROWSER TRUE
 )
 
 target_sources(GHSFXCompanion PRIVATE
@@ -45,7 +50,6 @@ target_sources(GHSFXCompanion PRIVATE
     Source/PluginEditor.cpp
     Source/PluginScanning.cpp
     Source/ChainPresets.cpp
-    Source/VintageLookAndFeel.cpp
     Source/RecipeImport.cpp
     Source/PluginDatabase.cpp
     Source/ChainAxes.cpp
@@ -61,17 +65,23 @@ target_sources(GHSFXCompanion PRIVATE
 # lib/drum-chain-variants.ts, generated from those files (see the export
 # script referenced in Source/ChainAxes.cpp / DrumChainVariants.cpp) so this
 # plugin's "record and suggest" feature and the web app's prompt matcher can
-# never drift onto different data. All compiled into the binary so none of
-# it depends on an external file on disk.
+# never drift onto different data.
+# Resources/webui/*: the actual UI, served to the embedded WebBrowserComponent
+# by PluginEditor's ResourceProvider - see PluginEditor.cpp's getResource().
+# All compiled into the binary so none of it depends on an external file on
+# disk or any network access.
 juce_add_binary_data(GHSFXCompanionData
     SOURCES
         Resources/plugin_database.json
         Resources/axis_config.json
         Resources/drum_stage_variants.json
+        Resources/webui/index.html
+        Resources/webui/style.css
+        Resources/webui/app.js
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC
-    JUCE_WEB_BROWSER=0
+    JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     # Lets our own plugin host other plugins inside itself (VST3 always available;
@@ -86,6 +96,7 @@ target_link_libraries(GHSFXCompanion PRIVATE
     juce::juce_audio_processors
     juce::juce_dsp
     juce::juce_gui_basics
+    juce::juce_gui_extra
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags

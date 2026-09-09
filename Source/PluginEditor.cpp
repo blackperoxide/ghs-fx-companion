@@ -1,253 +1,32 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
 #include "PluginDatabase.h"
+#include "BinaryData.h"
 #include <algorithm>
+#include <cstring>
 
 namespace
 {
-    constexpr int kTitleBarHeight = 22;
-    constexpr int kTopBarHeight = 30;
-    constexpr int kPresetBarHeight = 28;
-    constexpr int kToneBarHeight = 28;
-    constexpr int kSearchBarHeight = 24;
-    constexpr int kRowGap = 6;
-    constexpr int kSlotRowHeight = 28;
-    constexpr int kSlotRowGap = 2;
-    constexpr int kListBoxWidth = 220;
-    constexpr int kRackHeight = GHSFXCompanionProcessor::maxChainSlots * (kSlotRowHeight + kSlotRowGap);
-    constexpr int kDefaultWidth = 660;
-    constexpr int kDefaultHeight = kTitleBarHeight + kTopBarHeight + kRowGap + kPresetBarHeight + kRowGap
-                                    + kToneBarHeight + kRowGap
-                                    + kSearchBarHeight + kRowGap + kRackHeight + 32;
-}
-
-// ============================== SlotRow ====================================
-
-GHSFXCompanionEditor::SlotRow::SlotRow(GHSFXCompanionEditor& ownerEditor, int slotIndex)
-    : editor(ownerEditor), index(slotIndex)
-{
-    slotLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(slotLabel);
-
-    bypassButton.onClick = [this]
+    std::optional<juce::WebBrowserComponent::Resource> makeResource(const char* data, int size, const char* mime)
     {
-        auto* param = editor.ghsProcessor.getSlotBypassParameter(index);
-        *param = !param->get();
-        refresh();
-    };
-    addAndMakeVisible(bypassButton);
+        std::vector<std::byte> bytes((size_t) size);
+        std::memcpy(bytes.data(), data, (size_t) size);
+        return juce::WebBrowserComponent::Resource { std::move(bytes), juce::String(mime) };
+    }
 
-    loadButton.onClick = [this] { editor.loadSelectedPluginIntoSlot(index); };
-    addAndMakeVisible(loadButton);
-
-    removeButton.onClick = [this] { editor.removeSlot(index); };
-    addAndMakeVisible(removeButton);
-
-    editButton.onClick = [this] { editor.toggleSlotEditor(index); };
-    addAndMakeVisible(editButton);
-
-    upButton.onClick = [this] { editor.moveSlot(index, -1); };
-    addAndMakeVisible(upButton);
-
-    downButton.onClick = [this] { editor.moveSlot(index, 1); };
-    addAndMakeVisible(downButton);
+    juce::var toVarArray(const juce::StringArray& strings)
+    {
+        juce::Array<juce::var> result;
+        for (auto& s : strings)
+            result.add(s);
+        return result;
+    }
 }
 
-void GHSFXCompanionEditor::SlotRow::paint(juce::Graphics& g)
-{
-    // A recessed channel-strip bay behind each row's controls - the console's
-    // module-slot look, distinct from the raised/lit controls sitting on top of it.
-    auto bounds = getLocalBounds().toFloat();
-
-    g.setColour(VintageLookAndFeel::bezelDark.withAlpha(0.6f));
-    g.fillRoundedRectangle(bounds, 2.0f);
-
-    g.setColour(juce::Colours::black.withAlpha(0.35f));
-    g.drawLine(bounds.getX(), bounds.getY() + 0.5f, bounds.getRight(), bounds.getY() + 0.5f, 1.0f);
-}
-
-void GHSFXCompanionEditor::SlotRow::resized()
-{
-    auto area = getLocalBounds();
-
-    auto reorderCol = area.removeFromLeft(36);
-    upButton.setBounds(reorderCol.removeFromTop(getHeight() / 2));
-    downButton.setBounds(reorderCol);
-
-    area.removeFromLeft(4);
-    removeButton.setBounds(area.removeFromRight(60));
-    area.removeFromRight(4);
-    editButton.setBounds(area.removeFromRight(52));
-    area.removeFromRight(4);
-    loadButton.setBounds(area.removeFromRight(104));
-    area.removeFromRight(4);
-    bypassButton.setBounds(area.removeFromRight(68));
-    area.removeFromRight(6);
-
-    slotLabel.setBounds(area);
-}
-
-void GHSFXCompanionEditor::SlotRow::refresh()
-{
-    auto* plugin = editor.ghsProcessor.getPluginInSlot(index);
-    auto* bypassParam = editor.ghsProcessor.getSlotBypassParameter(index);
-
-    slotLabel.setText(juce::String(index + 1) + ". " + (plugin != nullptr ? plugin->getName() : juce::String("Empty")),
-                       juce::dontSendNotification);
-
-    bypassButton.setToggleState(bypassParam->get(), juce::dontSendNotification);
-    bypassButton.setEnabled(plugin != nullptr);
-    removeButton.setEnabled(plugin != nullptr);
-    editButton.setEnabled(plugin != nullptr);
-    editButton.setButtonText(editor.openEditorSlot == index ? "Close" : "Edit");
-
-    upButton.setEnabled(index > 0);
-    downButton.setEnabled(index < GHSFXCompanionProcessor::maxChainSlots - 1);
-}
-
-// ============================ Editor ========================================
+// ============================================================================
 
 GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     : juce::AudioProcessorEditor(&p), ghsProcessor(p)
-{
-    setLookAndFeel(&vintageLookAndFeel);
-
-    searchBox.setTextToShowWhenEmpty("Search plugins...", juce::Colours::grey);
-    searchBox.onTextChange = [this] { applySearchFilter(); };
-    addAndMakeVisible(searchBox);
-
-    addAndMakeVisible(pluginListBox);
-
-    scanButton.onClick = [this] { refreshPluginList(); };
-    addAndMakeVisible(scanButton);
-
-    statusLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(statusLabel);
-
-    presetComboBox.setTextWhenNothingSelected("Load Preset...");
-    presetComboBox.setTextWhenNoChoicesAvailable("No saved presets");
-    presetComboBox.onChange = [this] { presetSelected(); };
-    addAndMakeVisible(presetComboBox);
-
-    savePresetButton.onClick = [this] { savePresetClicked(); };
-    addAndMakeVisible(savePresetButton);
-
-    deletePresetButton.onClick = [this] { deletePresetClicked(); };
-    addAndMakeVisible(deletePresetButton);
-
-    importRecipeButton.onClick = [this] { importRecipeClicked(); };
-    addAndMakeVisible(importRecipeButton);
-
-    toneRecordButton.setColour(juce::TextButton::buttonColourId, VintageLookAndFeel::redLED.withAlpha(0.35f));
-    toneRecordButton.onClick = [this] { toneRecordButtonClicked(); };
-    addAndMakeVisible(toneRecordButton);
-
-    for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
-    {
-        auto* row = slotRows.add(new SlotRow(*this, i));
-        addAndMakeVisible(row);
-    }
-
-    setResizable(true, true);
-    setSize(kDefaultWidth, kDefaultHeight);
-
-    refreshPluginList();
-    refreshAllSlotRows();
-    refreshPresetList();
-}
-
-GHSFXCompanionEditor::~GHSFXCompanionEditor()
-{
-    closeHostedPluginEditorWindow();
-    setLookAndFeel(nullptr);
-}
-
-void GHSFXCompanionEditor::paint(juce::Graphics& g)
-{
-    VintageLookAndFeel::drawConsolePanel(g, getLocalBounds().toFloat());
-
-    auto titleBar = getLocalBounds().reduced(8).removeFromTop(kTitleBarHeight);
-    g.setColour(VintageLookAndFeel::cream.withAlpha(0.75f));
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-    g.drawText("GHS FX COMPANION", titleBar, juce::Justification::centredLeft);
-}
-
-void GHSFXCompanionEditor::resized()
-{
-    auto area = getLocalBounds().reduced(8);
-    area.removeFromTop(kTitleBarHeight);
-
-    auto topBar = area.removeFromTop(kTopBarHeight);
-    scanButton.setBounds(topBar.removeFromLeft(160));
-    topBar.removeFromLeft(8);
-    statusLabel.setBounds(topBar);
-
-    area.removeFromTop(kRowGap);
-
-    auto presetBar = area.removeFromTop(kPresetBarHeight);
-    presetComboBox.setBounds(presetBar.removeFromLeft(180));
-    presetBar.removeFromLeft(6);
-    savePresetButton.setBounds(presetBar.removeFromLeft(100));
-    presetBar.removeFromLeft(6);
-    deletePresetButton.setBounds(presetBar.removeFromLeft(100));
-    presetBar.removeFromLeft(14);
-    importRecipeButton.setBounds(presetBar.removeFromLeft(120));
-
-    area.removeFromTop(kRowGap);
-
-    auto toneBar = area.removeFromTop(kToneBarHeight);
-    toneRecordButton.setBounds(toneBar.removeFromLeft(200));
-
-    area.removeFromTop(kRowGap);
-
-    auto searchBar = area.removeFromTop(kSearchBarHeight);
-    searchBox.setBounds(searchBar.removeFromLeft(kListBoxWidth));
-
-    area.removeFromTop(kRowGap);
-
-    auto middle = area.removeFromTop(kRackHeight);
-    pluginListBox.setBounds(middle.removeFromLeft(kListBoxWidth));
-    middle.removeFromLeft(8);
-
-    auto rackArea = middle;
-    for (auto* row : slotRows)
-    {
-        row->setBounds(rackArea.removeFromTop(kSlotRowHeight));
-        rackArea.removeFromTop(kSlotRowGap);
-    }
-
-    area.removeFromTop(8);
-
-    if (hostedEditorHolder != nullptr)
-        hostedEditorHolder->setBounds(area);
-}
-
-int GHSFXCompanionEditor::getNumRows()
-{
-    return foundPlugins.size();
-}
-
-void GHSFXCompanionEditor::paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected)
-{
-    if (rowIsSelected)
-        g.fillAll(getLookAndFeel().findColour(juce::TextEditor::highlightColourId));
-
-    g.setColour(getLookAndFeel().findColour(juce::ListBox::textColourId));
-    g.setFont((float) height * 0.6f);
-
-    if (juce::isPositiveAndBelow(rowNumber, foundPlugins.size()))
-    {
-        auto& desc = foundPlugins.getReference(rowNumber);
-        auto text = desc.name + "  (" + desc.pluginFormatName + ")";
-
-        if (auto* dbEntry = GHSPluginDatabase::lookupPlugin(desc.name))
-            text << "  \xe2\x80\x94  " << dbEntry->category; // em dash
-
-        g.drawText(text, 4, 0, width - 8, height, juce::Justification::centredLeft, true);
-    }
-}
-
-void GHSFXCompanionEditor::refreshPluginList()
 {
     allScannedPlugins = ghsProcessor.loadKnownPlugins();
     std::sort(allScannedPlugins.begin(), allScannedPlugins.end(),
@@ -256,377 +35,336 @@ void GHSFXCompanionEditor::refreshPluginList()
                   return a.name.compareIgnoreCase(b.name) < 0;
               });
 
-    applySearchFilter();
+    auto options = juce::WebBrowserComponent::Options{}
+        .withNativeIntegrationEnabled()
+        .withResourceProvider([this](const juce::String& url) { return getResource(url); })
+        .withNativeFunction("getState",
+            [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleGetState());
+            })
+        .withNativeFunction("searchPlugins",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleSearchPlugins(args));
+            })
+        .withNativeFunction("loadPluginIntoSlot",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleLoadPluginIntoSlot(args, completion);
+            })
+        .withNativeFunction("unloadSlot",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleUnloadSlot(args));
+            })
+        .withNativeFunction("moveSlot",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleMoveSlot(args));
+            })
+        .withNativeFunction("toggleBypass",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleToggleBypass(args));
+            })
+        .withNativeFunction("refreshPluginScan",
+            [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleRefreshPluginScan());
+            })
+        .withNativeFunction("savePreset",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleSavePreset(args, completion);
+            })
+        .withNativeFunction("loadPreset",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleLoadPreset(args, completion);
+            })
+        .withNativeFunction("deletePreset",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                completion(handleDeletePreset(args));
+            })
+        .withNativeFunction("importRecipe",
+            [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleImportRecipe();
+                completion({});
+            })
+        .withNativeFunction("startToneCapture",
+            [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleStartToneCapture();
+                completion({});
+            })
+        .withNativeFunction("stopToneCaptureAndAnalyze",
+            [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleStopToneCaptureAndAnalyze(completion);
+            })
+        .withNativeFunction("openHostedEditor",
+            [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+            {
+                handleOpenHostedEditor(args);
+                completion({});
+            });
 
-    if (allScannedPlugins.isEmpty())
+    webView = std::make_unique<SinglePageBrowser>(options);
+    addAndMakeVisible(*webView);
+    webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+
+    setResizable(true, true);
+    setSize(920, 640);
+}
+
+GHSFXCompanionEditor::~GHSFXCompanionEditor()
+{
+    hostedEditorWindow.reset();
+}
+
+void GHSFXCompanionEditor::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colours::black);
+}
+
+void GHSFXCompanionEditor::resized()
+{
+    if (webView != nullptr)
+        webView->setBounds(getLocalBounds());
+}
+
+void GHSFXCompanionEditor::timerCallback()
+{
+    if (!ghsProcessor.isCapturingTone())
     {
-        statusLabel.setText("No plugin list yet - run \"GHS FX Companion Scanner\" once (outside Logic), then click Refresh.",
-                             juce::dontSendNotification);
+        stopTimer();
         return;
     }
 
-    auto lastScan = GHSPluginScanning::getLastScanTime();
-    juce::String scanInfo;
-    if (lastScan != juce::Time())
-        scanInfo = " - last scanned " + (juce::Time::getCurrentTime() - lastScan).getApproximateDescription() + " ago";
-
-    statusLabel.setText(juce::String(allScannedPlugins.size()) + " plugin(s) available" + scanInfo
-                             + ". Select one, then \"Load Selected\" on a chain slot below.",
-                         juce::dontSendNotification);
+    juce::DynamicObject::Ptr payload = new juce::DynamicObject();
+    payload->setProperty("seconds", ghsProcessor.getToneCaptureSeconds());
+    webView->emitEventIfBrowserIsVisible("toneCaptureTick", juce::var(payload.get()));
 }
 
-void GHSFXCompanionEditor::applySearchFilter()
-{
-    auto query = searchBox.getText().trim();
+// ============================== Resources ===================================
 
-    foundPlugins.clear();
+std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getResource(const juce::String& url)
+{
+    auto path = url == "/" ? juce::String("index.html") : url.fromFirstOccurrenceOf("/", false, false);
+
+    if (path == "index.html")
+        return makeResource(BinaryData::index_html, BinaryData::index_htmlSize, "text/html");
+    if (path == "style.css")
+        return makeResource(BinaryData::style_css, BinaryData::style_cssSize, "text/css");
+    if (path == "app.js")
+        return makeResource(BinaryData::app_js, BinaryData::app_jsSize, "text/javascript");
+
+    return std::nullopt;
+}
+
+// ============================== Native functions ============================
+
+const juce::PluginDescription* GHSFXCompanionEditor::findKnownPluginByIdentifier(const juce::String& identifier)
+{
+    for (auto& desc : allScannedPlugins)
+        if (desc.createIdentifierString() == identifier)
+            return &desc;
+    return nullptr;
+}
+
+void GHSFXCompanionEditor::emitToast(const juce::String& text, const juce::String& tone)
+{
+    juce::DynamicObject::Ptr payload = new juce::DynamicObject();
+    payload->setProperty("text", text);
+    payload->setProperty("tone", tone);
+    webView->emitEventIfBrowserIsVisible("toast", juce::var(payload.get()));
+}
+
+juce::var GHSFXCompanionEditor::handleGetState()
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+
+    juce::Array<juce::var> slots;
+    for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
+    {
+        juce::DynamicObject::Ptr slot = new juce::DynamicObject();
+        slot->setProperty("index", i);
+
+        auto* plugin = ghsProcessor.getPluginInSlot(i);
+        slot->setProperty("name", plugin != nullptr ? juce::var(plugin->getName()) : juce::var());
+        slot->setProperty("format", plugin != nullptr
+                                         ? juce::var(plugin->getPluginDescription().pluginFormatName)
+                                         : juce::var());
+        slot->setProperty("bypassed", ghsProcessor.getSlotBypassParameter(i)->get());
+
+        slots.add(juce::var(slot.get()));
+    }
+    obj->setProperty("slots", slots);
+
+    obj->setProperty("presets", toVarArray(ghsProcessor.getChainPresetNames()));
+
+    obj->setProperty("scanCount", allScannedPlugins.size());
+    auto lastScan = GHSPluginScanning::getLastScanTime();
+    obj->setProperty("scanAgo", lastScan != juce::Time()
+                                     ? juce::var((juce::Time::getCurrentTime() - lastScan).getApproximateDescription())
+                                     : juce::var(juce::String()));
+
+    obj->setProperty("capturing", ghsProcessor.isCapturingTone());
+    obj->setProperty("captureSeconds", ghsProcessor.getToneCaptureSeconds());
+
+    return juce::var(obj.get());
+}
+
+juce::var GHSFXCompanionEditor::handleSearchPlugins(const juce::Array<juce::var>& args)
+{
+    const juce::String query = args.size() > 0 ? args[0].toString() : juce::String();
+
+    juce::Array<juce::var> results;
     for (auto& desc : allScannedPlugins)
     {
         bool matches = query.isEmpty()
                        || desc.name.containsIgnoreCase(query)
                        || desc.manufacturerName.containsIgnoreCase(query);
 
-        // Also match category/subcategory/tags from the real plugin database, so
-        // e.g. searching "compressor" surfaces every compressor even if that word
-        // isn't literally in the product name.
+        auto* dbEntry = GHSPluginDatabase::lookupPlugin(desc.name);
+        if (!matches && dbEntry != nullptr)
+        {
+            matches = dbEntry->category.containsIgnoreCase(query)
+                      || dbEntry->subcategory.containsIgnoreCase(query)
+                      || dbEntry->tags.containsIgnoreCase(query);
+        }
+
         if (!matches)
-        {
-            if (auto* dbEntry = GHSPluginDatabase::lookupPlugin(desc.name))
-            {
-                matches = dbEntry->category.containsIgnoreCase(query)
-                          || dbEntry->subcategory.containsIgnoreCase(query)
-                          || dbEntry->tags.containsIgnoreCase(query);
-            }
-        }
+            continue;
 
-        if (matches)
-            foundPlugins.add(desc);
+        juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+        obj->setProperty("identifier", desc.createIdentifierString());
+        obj->setProperty("name", desc.name);
+        obj->setProperty("manufacturer", desc.manufacturerName);
+        obj->setProperty("format", desc.pluginFormatName);
+        obj->setProperty("category", dbEntry != nullptr ? juce::var(dbEntry->category) : juce::var(juce::String()));
+        results.add(juce::var(obj.get()));
+
+        if (results.size() >= 200) // bound the payload for a very large scanned library
+            break;
     }
 
-    pluginListBox.deselectAllRows();
-    pluginListBox.updateContent();
+    return juce::var(results);
 }
 
-void GHSFXCompanionEditor::loadSelectedPluginIntoSlot(int slotIndex)
+void GHSFXCompanionEditor::handleLoadPluginIntoSlot(const juce::Array<juce::var>& args,
+                                                      juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    auto row = pluginListBox.getSelectedRow();
-    if (!juce::isPositiveAndBelow(row, foundPlugins.size()))
+    if (args.size() < 2)
     {
-        statusLabel.setText("Select a plugin from the list first.", juce::dontSendNotification);
+        completion(false);
         return;
     }
 
-    auto description = foundPlugins.getReference(row);
-    statusLabel.setText("Loading " + description.name + " into slot " + juce::String(slotIndex + 1) + "...",
-                         juce::dontSendNotification);
+    const int slotIndex = (int) args[0];
+    const auto identifier = args[1].toString();
 
-    ghsProcessor.loadPluginIntoSlot(slotIndex, description, [this, slotIndex, description](const juce::String& error)
+    auto* desc = findKnownPluginByIdentifier(identifier);
+    if (desc == nullptr)
     {
-        if (error.isNotEmpty())
-        {
-            statusLabel.setText("Failed to load " + description.name + ": " + error, juce::dontSendNotification);
-            slotRows[slotIndex]->refresh();
-            return;
-        }
+        juce::DynamicObject::Ptr result = new juce::DynamicObject();
+        result->setProperty("success", false);
+        result->setProperty("error", "Plugin not found in the scanned list.");
+        completion(juce::var(result.get()));
+        return;
+    }
 
-        statusLabel.setText("Loaded " + description.name + " into slot " + juce::String(slotIndex + 1) + ".",
-                             juce::dontSendNotification);
-        slotRows[slotIndex]->refresh();
-
-        if (openEditorSlot == slotIndex)
-            showHostedPluginEditor(slotIndex);
+    ghsProcessor.loadPluginIntoSlot(slotIndex, *desc, [completion](const juce::String& error)
+    {
+        juce::DynamicObject::Ptr result = new juce::DynamicObject();
+        result->setProperty("success", error.isEmpty());
+        result->setProperty("error", error);
+        completion(juce::var(result.get()));
     });
 }
 
-void GHSFXCompanionEditor::removeSlot(int slotIndex)
+juce::var GHSFXCompanionEditor::handleUnloadSlot(const juce::Array<juce::var>& args)
 {
-    if (openEditorSlot == slotIndex)
-        closeHostedPluginEditorWindow();
+    if (args.size() < 1)
+        return {};
 
-    ghsProcessor.unloadSlot(slotIndex);
-    slotRows[slotIndex]->refresh();
-    statusLabel.setText("Removed slot " + juce::String(slotIndex + 1) + ".", juce::dontSendNotification);
+    ghsProcessor.unloadSlot((int) args[0]);
+    return {};
 }
 
-void GHSFXCompanionEditor::moveSlot(int slotIndex, int direction)
+juce::var GHSFXCompanionEditor::handleMoveSlot(const juce::Array<juce::var>& args)
 {
-    const int target = slotIndex + direction;
-    if (!juce::isPositiveAndBelow(target, GHSFXCompanionProcessor::maxChainSlots))
-        return;
+    if (args.size() < 2)
+        return {};
 
-    ghsProcessor.moveSlot(slotIndex, target);
-
-    if (openEditorSlot == slotIndex)
-        openEditorSlot = target;
-    else if (openEditorSlot == target)
-        openEditorSlot = slotIndex;
-
-    refreshAllSlotRows();
+    ghsProcessor.moveSlot((int) args[0], (int) args[1]);
+    return {};
 }
 
-void GHSFXCompanionEditor::toggleSlotEditor(int slotIndex)
+juce::var GHSFXCompanionEditor::handleToggleBypass(const juce::Array<juce::var>& args)
 {
-    if (openEditorSlot == slotIndex)
-        closeHostedPluginEditorWindow();
-    else
-        showHostedPluginEditor(slotIndex);
+    if (args.size() < 1)
+        return {};
+
+    auto* param = ghsProcessor.getSlotBypassParameter((int) args[0]);
+    *param = !param->get();
+    return {};
 }
 
-void GHSFXCompanionEditor::showHostedPluginEditor(int slotIndex)
+juce::var GHSFXCompanionEditor::handleRefreshPluginScan()
 {
-    closeHostedPluginEditorWindow();
+    allScannedPlugins = ghsProcessor.loadKnownPlugins();
+    std::sort(allScannedPlugins.begin(), allScannedPlugins.end(),
+              [](const juce::PluginDescription& a, const juce::PluginDescription& b)
+              {
+                  return a.name.compareIgnoreCase(b.name) < 0;
+              });
 
-    auto* hosted = ghsProcessor.getPluginInSlot(slotIndex);
-    if (hosted == nullptr)
-        return;
-
-    hostedEditor.reset(hosted->createEditorIfNeeded());
-    if (hostedEditor == nullptr)
-        return;
-
-    openEditorSlot = slotIndex;
-    slotRows[slotIndex]->refresh();
-
-    hostedEditorHolder = std::make_unique<juce::Component>();
-    hostedEditorHolder->addAndMakeVisible(*hostedEditor);
-    addAndMakeVisible(*hostedEditorHolder);
-
-    // Grow our own window to fit the hosted plugin's real editor size.
-    auto hostedBounds = hostedEditor->getLocalBounds();
-    setSize(juce::jmax(kDefaultWidth, hostedBounds.getWidth() + 16),
-             kDefaultHeight + 8 + juce::jmax(120, hostedBounds.getHeight()));
-
-    resized();
+    juce::DynamicObject::Ptr result = new juce::DynamicObject();
+    result->setProperty("count", allScannedPlugins.size());
+    return juce::var(result.get());
 }
 
-void GHSFXCompanionEditor::closeHostedPluginEditorWindow()
+void GHSFXCompanionEditor::handleSavePreset(const juce::Array<juce::var>& args,
+                                             juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    const int previouslyOpen = openEditorSlot;
+    const bool success = args.size() > 0 && ghsProcessor.saveChainPreset(args[0].toString());
 
-    hostedEditor.reset();
-    hostedEditorHolder.reset();
-    openEditorSlot = -1;
-
-    if (juce::isPositiveAndBelow(previouslyOpen, slotRows.size()))
-        slotRows[previouslyOpen]->refresh();
+    juce::DynamicObject::Ptr result = new juce::DynamicObject();
+    result->setProperty("success", success);
+    completion(juce::var(result.get()));
 }
 
-void GHSFXCompanionEditor::refreshAllSlotRows()
+void GHSFXCompanionEditor::handleLoadPreset(const juce::Array<juce::var>& args,
+                                             juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    for (auto* row : slotRows)
-        row->refresh();
-}
-
-void GHSFXCompanionEditor::refreshPresetList()
-{
-    presetComboBox.clear(juce::dontSendNotification);
-
-    int itemId = 1;
-    for (auto& name : ghsProcessor.getChainPresetNames())
-        presetComboBox.addItem(name, itemId++);
-}
-
-void GHSFXCompanionEditor::presetSelected()
-{
-    const auto itemIndex = presetComboBox.getSelectedItemIndex();
-    if (itemIndex < 0)
-        return;
-
-    auto name = presetComboBox.getItemText(itemIndex);
-
-    // Any slot's editor currently open may be about to be replaced or removed.
-    closeHostedPluginEditorWindow();
-
-    statusLabel.setText("Loading preset \"" + name + "\"...", juce::dontSendNotification);
-
-    ghsProcessor.loadChainPreset(name, [this, name]
+    if (args.size() < 1)
     {
-        refreshAllSlotRows();
-        statusLabel.setText("Loaded preset \"" + name + "\".", juce::dontSendNotification);
+        completion(false);
+        return;
+    }
+
+    ghsProcessor.loadChainPreset(args[0].toString(), [completion]
+    {
+        juce::DynamicObject::Ptr result = new juce::DynamicObject();
+        result->setProperty("success", true);
+        completion(juce::var(result.get()));
     });
 }
 
-void GHSFXCompanionEditor::savePresetClicked()
+juce::var GHSFXCompanionEditor::handleDeletePreset(const juce::Array<juce::var>& args)
 {
-    auto* window = new juce::AlertWindow("Save Preset", "Name this chain preset:", juce::MessageBoxIconType::NoIcon);
-    window->addTextEditor("name", "", "Preset name:");
-    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    const bool success = args.size() > 0 && ghsProcessor.deleteChainPreset(args[0].toString());
 
-    window->enterModalState(true, juce::ModalCallbackFunction::create([this, window](int result)
-    {
-        std::unique_ptr<juce::AlertWindow> owned(window);
-        if (result != 1)
-            return;
-
-        auto name = owned->getTextEditorContents("name").trim();
-        if (name.isEmpty())
-            return;
-
-        if (ghsProcessor.saveChainPreset(name))
-        {
-            statusLabel.setText("Saved preset \"" + name + "\".", juce::dontSendNotification);
-            refreshPresetList();
-        }
-        else
-        {
-            statusLabel.setText("Failed to save preset \"" + name + "\".", juce::dontSendNotification);
-        }
-    }), false);
+    juce::DynamicObject::Ptr result = new juce::DynamicObject();
+    result->setProperty("success", success);
+    return juce::var(result.get());
 }
 
-void GHSFXCompanionEditor::deletePresetClicked()
-{
-    const auto itemIndex = presetComboBox.getSelectedItemIndex();
-    if (itemIndex < 0)
-    {
-        statusLabel.setText("Select a preset from the dropdown first.", juce::dontSendNotification);
-        return;
-    }
-
-    auto name = presetComboBox.getItemText(itemIndex);
-
-    if (ghsProcessor.deleteChainPreset(name))
-    {
-        statusLabel.setText("Deleted preset \"" + name + "\".", juce::dontSendNotification);
-        refreshPresetList();
-    }
-    else
-    {
-        statusLabel.setText("Failed to delete preset \"" + name + "\".", juce::dontSendNotification);
-    }
-}
-
-void GHSFXCompanionEditor::timerCallback()
-{
-    if (ghsProcessor.isCapturingTone())
-    {
-        toneRecordButton.setButtonText("Stop & Suggest (" + juce::String(ghsProcessor.getToneCaptureSeconds(), 1) + "s)");
-    }
-    else
-    {
-        stopTimer();
-    }
-}
-
-void GHSFXCompanionEditor::toneRecordButtonClicked()
-{
-    if (waitingForToneAnalysis)
-        return; // previous take is still being analyzed - ignore a stray click
-
-    if (ghsProcessor.isCapturingTone())
-    {
-        stopTimer();
-        waitingForToneAnalysis = true;
-        toneRecordButton.setEnabled(false);
-        toneRecordButton.setButtonText("Analyzing...");
-        statusLabel.setText("Analyzing captured audio...", juce::dontSendNotification);
-
-        ghsProcessor.stopToneCaptureAndAnalyze(
-            [this](std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel)
-            {
-                waitingForToneAnalysis = false;
-                toneRecordButton.setEnabled(true);
-                toneRecordButton.setButtonText("Record & Suggest");
-                applyToneSuggestions(std::move(stages), nearestVibeLabel);
-            });
-    }
-    else
-    {
-        ghsProcessor.startToneCapture();
-        toneRecordButton.setButtonText("Stop & Suggest (0.0s)");
-        statusLabel.setText("Recording your input - play a phrase, then click \"Stop & Suggest\".",
-                             juce::dontSendNotification);
-        startTimer(200);
-    }
-}
-
-void GHSFXCompanionEditor::applyToneSuggestions(std::vector<GHSToneRecommendation::SuggestedStage> stages,
-                                                 juce::String nearestVibeLabel)
-{
-    if (stages.empty())
-    {
-        statusLabel.setText("Couldn't get a usable analysis from that take - try recording a longer, louder phrase.",
-                             juce::dontSendNotification);
-        return;
-    }
-
-    juce::Array<int> emptySlots;
-    for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
-        if (ghsProcessor.getPluginInSlot(i) == nullptr)
-            emptySlots.add(i);
-
-    auto notOwned = std::make_shared<juce::StringArray>();
-
-    struct PendingLoad { int slotIndex; juce::PluginDescription description; };
-    std::vector<PendingLoad> toLoad;
-    int slotCursor = 0;
-
-    for (auto& stage : stages)
-    {
-        const GHSToneRecommendation::SuggestedOption* ownedOption = nullptr;
-        for (auto& opt : stage.options)
-        {
-            if (opt.owned) { ownedOption = &opt; break; }
-        }
-
-        if (ownedOption == nullptr)
-        {
-            notOwned->add(stage.name);
-            continue;
-        }
-
-        if (slotCursor >= emptySlots.size())
-        {
-            notOwned->add(stage.name + " (no empty slot left)");
-            continue;
-        }
-
-        toLoad.push_back({ emptySlots[slotCursor++], ownedOption->description });
-    }
-
-    if (toLoad.empty())
-    {
-        juce::String msg = "No owned plugins matched this take's suggested chain (closest preset: " + nearestVibeLabel + ").";
-        if (!notOwned->isEmpty())
-            msg += " Look for: " + notOwned->joinIntoString(", ") + ".";
-        statusLabel.setText(msg, juce::dontSendNotification);
-        return;
-    }
-
-    statusLabel.setText("Loading " + juce::String(toLoad.size()) + " suggested plugin(s) (closest preset: "
-                             + nearestVibeLabel + ")...",
-                         juce::dontSendNotification);
-
-    auto loadedSlots = std::make_shared<juce::StringArray>();
-    auto remaining = std::make_shared<int>((int) toLoad.size());
-
-    for (auto& pending : toLoad)
-    {
-        ghsProcessor.loadPluginIntoSlot(pending.slotIndex, pending.description,
-            [this, slotIndex = pending.slotIndex, remaining, notOwned, loadedSlots, nearestVibeLabel](const juce::String& error)
-            {
-                if (juce::isPositiveAndBelow(slotIndex, slotRows.size()))
-                    slotRows[slotIndex]->refresh();
-
-                if (error.isEmpty())
-                    loadedSlots->add(juce::String(slotIndex + 1));
-                else
-                    notOwned->add("slot " + juce::String(slotIndex + 1) + " (" + error + ")");
-
-                if (--(*remaining) <= 0)
-                {
-                    juce::String msg = juce::String(loadedSlots->size()) + " plugin(s) loaded into slot(s) "
-                                        + loadedSlots->joinIntoString(", ") + " (closest preset: " + nearestVibeLabel + ").";
-                    if (!notOwned->isEmpty())
-                        msg += " Not matched: " + notOwned->joinIntoString(", ") + ".";
-                    statusLabel.setText(msg, juce::dontSendNotification);
-                }
-            });
-    }
-}
-
-void GHSFXCompanionEditor::importRecipeClicked()
+void GHSFXCompanionEditor::handleImportRecipe()
 {
     recipeFileChooser = std::make_unique<juce::FileChooser>(
         "Import Chain Recipe (.ghsrecipe.json, from the GHS FX Chain Builder website)",
@@ -640,13 +378,11 @@ void GHSFXCompanionEditor::importRecipeClicked()
             if (!file.existsAsFile())
                 return;
 
-            auto known = ghsProcessor.loadKnownPlugins();
-            auto matches = GHSRecipeImport::loadAndMatch(file, known, GHSFXCompanionProcessor::maxChainSlots);
+            auto matches = GHSRecipeImport::loadAndMatch(file, allScannedPlugins, GHSFXCompanionProcessor::maxChainSlots);
 
             if (matches.isEmpty())
             {
-                statusLabel.setText("Couldn't read a recipe from \"" + file.getFileName() + "\".",
-                                     juce::dontSendNotification);
+                emitToast("Couldn't read a recipe from \"" + file.getFileName() + "\".", "error");
                 return;
             }
 
@@ -662,16 +398,9 @@ void GHSFXCompanionEditor::importRecipeClicked()
 
             if (matchedCount == 0)
             {
-                statusLabel.setText("None of \"" + file.getFileName() + "\"'s plugins were found in your library.",
-                                     juce::dontSendNotification);
+                emitToast("None of that recipe's plugins were found in your library.", "error");
                 return;
             }
-
-            // Any slot's editor currently open may be about to be replaced.
-            closeHostedPluginEditorWindow();
-
-            statusLabel.setText("Importing recipe \"" + file.getFileNameWithoutExtension() + "\"...",
-                                 juce::dontSendNotification);
 
             auto remaining = std::make_shared<int>(matchedCount);
             for (int slotIndex = 0; slotIndex < matches.size(); ++slotIndex)
@@ -681,19 +410,100 @@ void GHSFXCompanionEditor::importRecipeClicked()
                     continue;
 
                 ghsProcessor.loadPluginIntoSlot(slotIndex, m.description,
-                    [this, slotIndex, remaining, unmatchedNames](const juce::String&)
+                    [this, remaining, unmatchedNames, matchedCount](const juce::String&)
                     {
-                        if (juce::isPositiveAndBelow(slotIndex, slotRows.size()))
-                            slotRows[slotIndex]->refresh();
-
                         if (--(*remaining) <= 0)
                         {
-                            auto msg = juce::String("Recipe imported.");
-                            if (!unmatchedNames->isEmpty())
-                                msg += " Not found in your library: " + unmatchedNames->joinIntoString(", ");
-                            statusLabel.setText(msg, juce::dontSendNotification);
+                            juce::DynamicObject::Ptr payload = new juce::DynamicObject();
+                            payload->setProperty("matchedCount", matchedCount);
+                            payload->setProperty("unmatchedNames", toVarArray(*unmatchedNames));
+                            webView->emitEventIfBrowserIsVisible("recipeImported", juce::var(payload.get()));
                         }
                     });
             }
         });
+}
+
+void GHSFXCompanionEditor::handleStartToneCapture()
+{
+    ghsProcessor.startToneCapture();
+    startTimer(200);
+}
+
+void GHSFXCompanionEditor::handleStopToneCaptureAndAnalyze(juce::WebBrowserComponent::NativeFunctionCompletion completion)
+{
+    stopTimer();
+
+    ghsProcessor.stopToneCaptureAndAnalyze(
+        [this, completion](std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel)
+        {
+            // Same "next empty slot in order" assignment the old auto-load used -
+            // computed here so the frontend's Load/Load All buttons can just pass
+            // the target slot straight back into loadPluginIntoSlot.
+            juce::Array<int> emptySlots;
+            for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
+                if (ghsProcessor.getPluginInSlot(i) == nullptr)
+                    emptySlots.add(i);
+
+            int slotCursor = 0;
+            juce::Array<juce::var> stagesVar;
+
+            for (auto& stage : stages)
+            {
+                juce::DynamicObject::Ptr stageObj = new juce::DynamicObject();
+                stageObj->setProperty("name", stage.name);
+                stageObj->setProperty("role", stage.role);
+                stageObj->setProperty("note", stage.note);
+
+                juce::Array<juce::var> optionsVar;
+                bool hasOwned = false;
+                for (auto& opt : stage.options)
+                {
+                    juce::DynamicObject::Ptr optObj = new juce::DynamicObject();
+                    optObj->setProperty("brand", opt.brand);
+                    optObj->setProperty("plugin", opt.plugin);
+                    optObj->setProperty("tip", opt.tip);
+                    optObj->setProperty("owned", opt.owned);
+                    if (opt.owned)
+                    {
+                        optObj->setProperty("identifier", opt.description.createIdentifierString());
+                        hasOwned = true;
+                    }
+                    optionsVar.add(juce::var(optObj.get()));
+                }
+                stageObj->setProperty("options", optionsVar);
+                stageObj->setProperty("targetSlotIndex", (hasOwned && slotCursor < emptySlots.size())
+                                                              ? juce::var(emptySlots[slotCursor++])
+                                                              : juce::var());
+
+                stagesVar.add(juce::var(stageObj.get()));
+            }
+
+            juce::DynamicObject::Ptr payload = new juce::DynamicObject();
+            payload->setProperty("nearestVibe", nearestVibeLabel);
+            payload->setProperty("stages", stagesVar);
+            completion(juce::var(payload.get()));
+        });
+}
+
+void GHSFXCompanionEditor::handleOpenHostedEditor(const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1)
+        return;
+
+    const int slotIndex = (int) args[0];
+    auto* hosted = ghsProcessor.getPluginInSlot(slotIndex);
+    if (hosted == nullptr)
+        return;
+
+    auto* editorComponent = hosted->createEditorIfNeeded();
+    if (editorComponent == nullptr)
+        return;
+
+    hostedEditorWindow = std::make_unique<HostedEditorWindow>(hosted->getName(), [this] { hostedEditorWindow.reset(); });
+    hostedEditorWindow->setUsingNativeTitleBar(true);
+    hostedEditorWindow->setContentOwned(editorComponent, true);
+    hostedEditorWindow->setResizable(false, false);
+    hostedEditorWindow->setVisible(true);
+    hostedEditorWindow->centreAroundComponent(this, editorComponent->getWidth(), editorComponent->getHeight());
 }
