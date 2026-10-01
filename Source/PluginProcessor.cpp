@@ -42,6 +42,7 @@ void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     currentBlockSize = samplesPerBlock;
 
     toneRecorder.prepare(sampleRate, juce::jmax(1, getMainBusNumInputChannels()));
+    riffHouse.prepare(sampleRate, samplesPerBlock);
 
     for (auto& slot : chain)
     {
@@ -81,6 +82,7 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Captured before the chain touches it - the point is to characterize the
     // raw tone arriving on this track, not whatever the rack already does to it.
     toneRecorder.pushBlock(buffer);
+    riffHouse.processInput(buffer, midiMessages);
 
     // Same buffer threaded through every non-empty, non-bypassed slot in order -
     // that's the whole chain. Empty slots and bypassed slots are transparent.
@@ -89,6 +91,14 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         if (slot.plugin != nullptr && !slot.bypassParam->get())
             slot.plugin->processBlock(buffer, midiMessages);
     }
+
+    // Monitoring through Apollo Console (Unison / zero latency)? Then the DAW must not
+    // hear the input again - output only the backing so nothing doubles or flams.
+    if (riffHouse.isMonitoringExternally())
+        buffer.clear();
+
+    // Backing track for Riff House goes in after the rack, so it never colours the tone.
+    riffHouse.renderBacking(buffer);
 }
 
 juce::AudioProcessorEditor* GHSFXCompanionProcessor::createEditor()

@@ -34,7 +34,7 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override; // emits "toneCaptureTick" while recording
+    void timerCallback() override; // 30 Hz: "rhLive" always, "toneCaptureTick" while recording
 
     std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url);
 
@@ -99,6 +99,10 @@ private:
     juce::Array<juce::PluginDescription> allScannedPlugins;
 
     std::unique_ptr<juce::FileChooser> recipeFileChooser;
+    std::unique_ptr<juce::FileChooser> riffFileChooser;
+    int toneTickDivider = 0;
+
+    juce::WebBrowserComponent::Options& addRiffHouseFunctions(juce::WebBrowserComponent::Options& options);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)
 };

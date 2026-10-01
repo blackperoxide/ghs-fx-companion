@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "ToneAnalyzer.h"
 #include "ToneRecommendation.h"
+#include "RiffHouseEngine.h"
 
 /**
  * Milestone 2: this processor hosts a bounded rack of third-party plugins in
@@ -116,7 +117,13 @@ public:
         std::function<void(std::vector<GHSToneRecommendation::SuggestedStage> stages,
                             juce::String nearestVibeLabel)> onComplete);
 
+public:
+    /** Riff House practice engine (live pitch/MIDI, capture, charts, backing). */
+    RiffHouse::Engine& getRiffHouse() { return riffHouse; }
+
 private:
+    RiffHouse::Engine riffHouse;
+
     /** Same shape used by getStateInformation and by named presets - built once, serialized two ways. */
     juce::ValueTree chainStateToValueTree();
 

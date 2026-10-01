@@ -57,6 +57,32 @@ html, body {
 
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 
+.view-switch {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+.view-switch-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+.view-switch-btn:hover { color: var(--text); }
+.view-switch-btn.on { background: var(--bg-elev-2); color: var(--accent-bright); }
+
+.view { display: none; min-height: 0; flex: 1 1 auto; }
+.view.on { display: flex; flex-direction: column; min-height: 0; }
+
 /* ---------------- Buttons ---------------- */
 
 .btn {

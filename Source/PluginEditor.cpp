@@ -111,13 +111,15 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
                 handleOpenHostedEditor(args);
                 completion({});
             });
+    addRiffHouseFunctions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
     addAndMakeVisible(*webView);
     webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
 
     setResizable(true, true);
-    setSize(920, 640);
+    setSize(1100, 720);
+    startTimerHz(30);
 }
 
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
@@ -138,11 +140,10 @@ void GHSFXCompanionEditor::resized()
 
 void GHSFXCompanionEditor::timerCallback()
 {
-    if (!ghsProcessor.isCapturingTone())
-    {
-        stopTimer();
+    webView->emitEventIfBrowserIsVisible("rhLive", ghsProcessor.getRiffHouse().getLiveState());
+
+    if (!ghsProcessor.isCapturingTone() || ++toneTickDivider % 6 != 0)
         return;
-    }
 
     juce::DynamicObject::Ptr payload = new juce::DynamicObject();
     payload->setProperty("seconds", ghsProcessor.getToneCaptureSeconds());
@@ -161,6 +162,10 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::style_css, BinaryData::style_cssSize, "text/css");
     if (path == "app.js")
         return makeResource(BinaryData::app_js, BinaryData::app_jsSize, "text/javascript");
+    if (path == "riffhouse.js")
+        return makeResource(BinaryData::riffhouse_js, BinaryData::riffhouse_jsSize, "text/javascript");
+    if (path == "riffhouse.css")
+        return makeResource(BinaryData::riffhouse_css, BinaryData::riffhouse_cssSize, "text/css");
 
     return std::nullopt;
 }
@@ -427,12 +432,10 @@ void GHSFXCompanionEditor::handleImportRecipe()
 void GHSFXCompanionEditor::handleStartToneCapture()
 {
     ghsProcessor.startToneCapture();
-    startTimer(200);
 }
 
 void GHSFXCompanionEditor::handleStopToneCaptureAndAnalyze(juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    stopTimer();
 
     ghsProcessor.stopToneCaptureAndAnalyze(
         [this, completion](std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel)
@@ -506,4 +509,68 @@ void GHSFXCompanionEditor::handleOpenHostedEditor(const juce::Array<juce::var>& 
     hostedEditorWindow->setResizable(false, false);
     hostedEditorWindow->setVisible(true);
     hostedEditorWindow->centreAroundComponent(this, editorComponent->getWidth(), editorComponent->getHeight());
+}
+
+// ============================== Riff House ==================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addRiffHouseFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto& rh = ghsProcessor.getRiffHouse();
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+
+    options = options
+        .withNativeFunction("rhSaveThat", [&rh, arg](Args a, Done done) { done(rh.saveThat((double) arg(a, 0, 60.0), (double) arg(a, 1, 90.0))); })
+        .withNativeFunction("rhCaptureWave", [&rh, arg](Args a, Done done) { done(rh.getCaptureWave((int) arg(a, 0, 800))); })
+        .withNativeFunction("rhExportLoop", [&rh, arg](Args a, Done done) { done(rh.exportLoop(arg(a, 0, 0.0), arg(a, 1, 0.0), arg(a, 2, 90.0))); })
+        .withNativeFunction("rhExportSlices", [&rh, arg](Args a, Done done) { done(rh.exportSlices(arg(a, 0, 0.0), arg(a, 1, 0.0), arg(a, 2, 5.0), arg(a, 3, 90.0))); })
+        .withNativeFunction("rhListCharts", [&rh](Args, Done done) { done(rh.listCharts()); })
+        .withNativeFunction("rhLoadChart", [&rh, arg](Args a, Done done) { rh.loadChartAsync(arg(a, 0, "").toString(), (bool) arg(a, 1, false), (double) arg(a, 2, 1.0), done); })
+        .withNativeFunction("rhTransport", [&rh, arg](Args a, Done done) { rh.setTransport((bool) arg(a, 0, false), (double) arg(a, 1, 0.0), (float) (double) arg(a, 2, 0.8)); done({}); })
+        .withNativeFunction("rhSetRate", [&rh, arg](Args a, Done done) { rh.setRateAsync((double) arg(a, 0, 1.0), [done] { done({}); }); })
+        .withNativeFunction("rhMonitorExternally", [&rh, arg](Args a, Done done) { rh.setMonitorExternally((bool) arg(a, 0, false)); done({}); })
+        .withNativeFunction("rhSetParam", [this, arg](Args a, Done done)
+        {
+            // hardware knob -> hosted plugin parameter (MIDI learn lives in the UI)
+            if (auto* p = ghsProcessor.getPluginInSlot((int) arg(a, 0, 0)))
+            {
+                auto params = p->getParameters();
+                const int idx = (int) arg(a, 1, 0);
+                if (juce::isPositiveAndBelow(idx, params.size()))
+                    params[idx]->setValueNotifyingHost((float) (double) arg(a, 2, 0.0));
+            }
+            done({});
+        })
+        .withNativeFunction("rhParamList", [this, arg](Args a, Done done)
+        {
+            juce::Array<juce::var> names;
+            if (auto* p = ghsProcessor.getPluginInSlot((int) arg(a, 0, 0)))
+                for (auto* prm : p->getParameters()) names.add(prm->getName(40));
+            done(names);
+        })
+        .withNativeFunction("rhRevealInbox", [](Args, Done done) { RiffHouse::inboxFolder().startAsProcess(); done({}); })
+        .withNativeFunction("rhImport", [this](Args a, Done done)
+        {
+            // kind: "file" (audio or MIDI) or "folder" (song folder from tools/riffhouse_import.py)
+            const auto kind = a.size() > 0 ? a[0].toString() : juce::String("file");
+            const auto instrument = a.size() > 1 ? a[1].toString() : juce::String("guitar");
+            const bool folder = kind == "folder";
+            riffFileChooser = std::make_unique<juce::FileChooser>(
+                folder ? "Choose a Riff House song folder" : "Choose a song, stem or MIDI file",
+                juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+                folder ? juce::String() : juce::String("*.wav;*.aif;*.aiff;*.flac;*.mp3;*.m4a;*.ogg;*.mid;*.midi"));
+            const int flags = juce::FileBrowserComponent::openMode
+                              | (folder ? juce::FileBrowserComponent::canSelectDirectories : juce::FileBrowserComponent::canSelectFiles);
+            riffFileChooser->launchAsync(flags, [this, done, folder, instrument](const juce::FileChooser& fc)
+            {
+                auto f = fc.getResult();
+                auto& engine = ghsProcessor.getRiffHouse();
+                if (f == juce::File()) { done({}); return; }
+                if (folder) engine.importSongFolderAsync(f, done);
+                else if (f.hasFileExtension("mid;midi")) done(engine.importMidi(f, instrument));
+                else engine.importAudioAsync(f, instrument, done);
+            });
+        });
+    return options;
 }
