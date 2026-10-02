@@ -317,6 +317,9 @@
     const notes = activeNotesForDensity();
     const memoryCutoff = RH.settings.memoryMode ? 0.6 : LOOKAHEAD_SEC;
 
+    drawPitchAxis(ctx, w, hitY, lo, hi, span);
+
+    let nextUp = null; // the soonest un-judged note - drives the big "Play this" readout
     for (let i = 0; i < notes.length; i++) {
       const [t, dur, midi] = notes[i];
       const dt = t - pos;
@@ -325,12 +328,22 @@
         continue;
       }
       if (dt > memoryCutoff) continue;
+      const judged = RH.session.judged.has(i);
+      if (!judged && (nextUp === null || dt < nextUp.dt)) nextUp = { dt, midi };
+
       const y = hitY - dt / LOOKAHEAD_SEC * hitY;
       const x = ((midi - lo) / span) * (w * 0.9) + w * 0.05;
-      const noteH = Math.max(6, (dur / LOOKAHEAD_SEC) * hitY);
-      const judged = RH.session.judged.has(i);
+      const noteH = Math.max(18, (dur / LOOKAHEAD_SEC) * hitY);
+      const blockW = Math.min(34, w * 0.9 / Math.max(1, span) + 12);
       ctx.fillStyle = judged ? "rgba(94,200,184,0.25)" : "rgba(94,200,184,0.85)";
-      ctx.fillRect(x - 9, y - noteH, 18, noteH);
+      ctx.fillRect(x - blockW / 2, y - noteH, blockW, noteH);
+
+      if (!judged) {
+        ctx.fillStyle = "#07201c";
+        ctx.font = "700 12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(midiToName(midi), x, y - noteH / 2 + 4);
+      }
 
       if (RH.settings.waitMode && !judged && Math.abs(dt) < 0.05) {
         maybeWaitForNote(midi);
@@ -340,12 +353,39 @@
       }
     }
 
+    drawNextNoteReadout(ctx, w, nextUp);
     drawLiveMarker(ctx, w, hitY);
     updateHud();
 
     if (RH.loop.active && RH.loop.b != null && pos >= RH.loop.b) {
       callNative("rhTransport", true, RH.loop.a || 0, 1.0);
     }
+  }
+
+  function drawPitchAxis(ctx, w, hitY, lo, hi, span) {
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "center";
+    const steps = Math.min(span, 10);
+    for (let s = 0; s <= steps; s++) {
+      const midi = Math.round(lo + (span * s) / steps);
+      const x = ((midi - lo) / span) * (w * 0.9) + w * 0.05;
+      ctx.fillText(midiToName(midi), x, hitY + 16);
+    }
+  }
+
+  function drawNextNoteReadout(ctx, w, nextUp) {
+    ctx.textAlign = "center";
+    if (!nextUp) {
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      ctx.font = "600 16px sans-serif";
+      ctx.fillText("...", w / 2, 36);
+      return;
+    }
+    const urgent = nextUp.dt <= HIT_GOOD;
+    ctx.fillStyle = urgent ? "#5ec8b8" : "rgba(255,255,255,0.75)";
+    ctx.font = urgent ? "800 30px sans-serif" : "700 20px sans-serif";
+    ctx.fillText((urgent ? "Play: " : "Next: ") + midiToName(nextUp.midi), w / 2, 40);
   }
 
   function drawLiveMarker(ctx, w, hitY) {
