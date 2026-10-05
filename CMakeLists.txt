@@ -57,6 +57,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/ToneAnalyzer.cpp
     Source/ToneRecommendation.cpp
     Source/RiffHouseEngine.cpp
+    Source/VisualsEngine.cpp
 )
 
 # plugin_database.json: the same categorized real-plugin database the
@@ -81,6 +82,8 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/app.js
         Resources/webui/riffhouse.js
         Resources/webui/riffhouse.css
+        Resources/webui/visuals.js
+        Resources/webui/visuals.css
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC

@@ -46,7 +46,10 @@
     session: null,
     waitingForNote: null,
     ninja: null,
+    fx: { particles: [], missFlash: 0, comboMilestone: 0 },
   };
+
+  const COMBO_MILESTONES = [10, 20, 30, 50, 75, 100, 150, 200];
 
   function newSession() {
     return {
@@ -60,20 +63,21 @@
   /* ---------------- view switch (top nav) ---------------- */
 
   function initViewSwitch() {
-    const navRack = document.getElementById("navRack");
-    const navRiff = document.getElementById("navRiffHouse");
-    const viewRack = document.getElementById("view-rack");
-    const viewRiff = document.getElementById("view-riffhouse");
-    function show(which) {
-      const rack = which === "rack";
-      viewRack.classList.toggle("on", rack);
-      viewRiff.classList.toggle("on", !rack);
-      navRack.classList.toggle("on", rack);
-      navRiff.classList.toggle("on", !rack);
-      if (!rack) requestAnimationFrame(resizeCanvases);
+    const tabs = [
+      { nav: "navRack", view: "view-rack" },
+      { nav: "navRiffHouse", view: "view-riffhouse" },
+      { nav: "navVisuals", view: "view-visuals" },
+    ];
+    function show(viewId) {
+      tabs.forEach((t) => {
+        const on = t.view === viewId;
+        document.getElementById(t.nav).classList.toggle("on", on);
+        document.getElementById(t.view).classList.toggle("on", on);
+      });
+      if (viewId === "view-riffhouse") requestAnimationFrame(resizeCanvases);
+      if (viewId === "view-visuals" && window.VZ) requestAnimationFrame(window.VZ.resize);
     }
-    navRack.addEventListener("click", () => show("rack"));
-    navRiff.addEventListener("click", () => show("riffhouse"));
+    tabs.forEach((t) => document.getElementById(t.nav).addEventListener("click", () => show(t.view)));
   }
 
   /* ---------------- root DOM ---------------- */
@@ -300,6 +304,8 @@
     const pos = (RH.live.pos || 0) + RH.settings.latencyMs / 1000;
     const hitY = h * 0.84;
 
+    drawStageBackground(ctx, w, h, hitY, pos);
+
     ctx.strokeStyle = "rgba(255,255,255,0.18)";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, hitY); ctx.lineTo(w, hitY); ctx.stroke();
@@ -349,17 +355,124 @@
         maybeWaitForNote(midi);
       }
       if (!judged && Math.abs(dt) <= HIT_GOOD) {
-        if (noteMatches(midi)) judgeHit(i, Math.abs(dt));
+        if (noteMatches(midi)) {
+          const perfect = judgeHit(i, Math.abs(dt));
+          spawnHitParticles(x, hitY, perfect);
+        }
       }
     }
 
     drawNextNoteReadout(ctx, w, nextUp);
     drawLiveMarker(ctx, w, hitY);
+    updateParticles(ctx);
+    drawMissFlash(ctx, w, h);
     updateHud();
 
     if (RH.loop.active && RH.loop.b != null && pos >= RH.loop.b) {
       callNative("rhTransport", true, RH.loop.a || 0, 1.0);
     }
+  }
+
+  /* ---------------- stage background (ambient, behind the notes) ----------------
+     Guitar-Hero-style forward motion + "the room reacts to you" cues: scrolling
+     lane lines synced to song position, a glow that tracks the rock meter /
+     combo tier, a Star Power color wash, and a soft pulse driven by the live
+     input level - so playing an actual guitar through the Tone cable visibly
+     energizes the stage, not just the HUD numbers. */
+
+  function drawStageBackground(ctx, w, h, hitY, pos) {
+    const rockT = (RH.session ? RH.session.rock : 50) / 100;
+    const mult = RH.session ? RH.session.multiplier : 1;
+    const starActive = RH.session && RH.session.starActive;
+
+    const tierColor = mult >= 4 ? "94,200,184" : mult >= 3 ? "240,130,90" : mult >= 2 ? "224,164,88" : "60,70,90";
+    const baseGlow = starActive ? "155,123,240" : tierColor;
+
+    // Vertical wash, brighter near the hit line, intensity tracks the rock meter.
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "rgba(10,12,16,1)");
+    grad.addColorStop(0.7, "rgba(10,12,16,1)");
+    grad.addColorStop(1, `rgba(${baseGlow},${0.05 + rockT * 0.10 + (starActive ? 0.08 : 0)})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Scrolling "speed" lines converging toward the hit line - synced to song
+    // position so they visibly flow, not just animate on a free-running clock.
+    const laneCount = 7;
+    const cycle = 90; // px of vertical travel per repeat
+    const phase = ((pos * 140) % cycle + cycle) % cycle;
+    ctx.strokeStyle = `rgba(${baseGlow},0.10)`;
+    ctx.lineWidth = 1;
+    for (let row = 0; row < 6; row++) {
+      const y = (row * cycle + phase) % h;
+      const depth = y / h; // 0 near top (far away) -> 1 near bottom (close)
+      ctx.globalAlpha = 0.15 + depth * 0.35;
+      ctx.beginPath();
+      for (let lane = 1; lane < laneCount; lane++) {
+        const xTop = (lane / laneCount) * w;
+        const xNear = w / 2 + (xTop - w / 2) * 1.4;
+        const x = xTop + (xNear - xTop) * depth;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + 2);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Live-input pulse: the Tone cable's own energy breathes a soft ring behind
+    // the hit line, so an unplugged/silent guitar visibly looks "quiet" and a
+    // strummed chord visibly "lights up" the stage, independent of scoring.
+    const rms = (RH.live && RH.live.rms) || 0;
+    const pulse = Math.min(1, rms * 18);
+    if (pulse > 0.02) {
+      const r = Math.min(w, h) * (0.25 + pulse * 0.18);
+      const ring = ctx.createRadialGradient(w / 2, hitY, 0, w / 2, hitY, r);
+      ring.addColorStop(0, `rgba(${baseGlow},${0.16 * pulse})`);
+      ring.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ring;
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  /* ---------------- hit particles (small, decaying - not a distraction) ---------------- */
+
+  function spawnHitParticles(x, y, perfect) {
+    const n = perfect ? 10 : 6;
+    const color = perfect ? "94,200,184" : "200,200,210";
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const speed = 0.6 + Math.random() * 1.6;
+      RH.fx.particles.push({
+        x, y,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed - 0.6,
+        life: 1,
+        color,
+      });
+    }
+    if (RH.fx.particles.length > 220) RH.fx.particles.splice(0, RH.fx.particles.length - 220);
+  }
+
+  function updateParticles(ctx) {
+    const particles = RH.fx.particles;
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= 0.035;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = `rgb(${p.color})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.2 * p.life + 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawMissFlash(ctx, w, h) {
+    if (RH.fx.missFlash <= 0) return;
+    ctx.fillStyle = `rgba(226,86,79,${RH.fx.missFlash * 0.12})`;
+    ctx.fillRect(0, 0, w, h);
+    RH.fx.missFlash = Math.max(0, RH.fx.missFlash - 0.08);
   }
 
   function drawPitchAxis(ctx, w, hitY, lo, hi, span) {
@@ -435,8 +548,19 @@
     RH.session.score += (perfect ? 100 : 60) * RH.session.multiplier * starMul;
     RH.session.rock = clamp(RH.session.rock + (perfect ? 3 : 2), 0, 100);
     RH.session.starPower = clamp(RH.session.starPower + (perfect ? 2.2 : 1.4), 0, 100);
-    burst(perfect ? "PERFECT" : "HIT");
+
+    // Combo milestones get a bigger, bolder callout than a routine hit - the
+    // "streak" dopamine beat most rhythm/mobile games lean on, without turning
+    // every single note into a fireworks show.
+    const nextMilestone = COMBO_MILESTONES.find((m) => m > RH.fx.comboMilestone && RH.session.combo >= m);
+    if (nextMilestone) {
+      RH.fx.comboMilestone = nextMilestone;
+      burst(nextMilestone + " COMBO!", true);
+    } else {
+      burst(perfect ? "PERFECT" : "HIT", false);
+    }
     resumeIfWaiting();
+    return perfect;
   }
 
   function judgeMiss(i) {
@@ -445,14 +569,17 @@
     RH.session.combo = 0;
     RH.session.multiplier = 1;
     RH.session.rock = clamp(RH.session.rock - 6, 0, 100);
+    RH.fx.comboMilestone = 0;
+    RH.fx.missFlash = 1;
   }
 
-  function burst(text) {
+  function burst(text, big) {
     const el = document.getElementById("rhBurst");
     el.textContent = text;
-    el.classList.remove("show");
+    el.classList.remove("show", "big");
     void el.offsetWidth;
     el.classList.add("show");
+    if (big) el.classList.add("big");
   }
 
   function updateHud() {

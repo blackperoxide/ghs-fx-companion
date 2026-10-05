@@ -112,6 +112,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
                 completion({});
             });
     addRiffHouseFunctions(options);
+    addVisualsFunctions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
     addAndMakeVisible(*webView);
@@ -125,6 +126,9 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
 {
     hostedEditorWindow.reset();
+    if (visualsWindow != nullptr)
+        visualsWindow->clearContentComponent(); // non-owned - don't let its destructor touch webView
+    visualsWindow.reset();
 }
 
 void GHSFXCompanionEditor::paint(juce::Graphics& g)
@@ -134,13 +138,19 @@ void GHSFXCompanionEditor::paint(juce::Graphics& g)
 
 void GHSFXCompanionEditor::resized()
 {
-    if (webView != nullptr)
+    // Fullscreen owns the webview's bounds while active - don't fight it.
+    if (webView != nullptr && !visualsFullscreen)
         webView->setBounds(getLocalBounds());
 }
 
 void GHSFXCompanionEditor::timerCallback()
 {
     webView->emitEventIfBrowserIsVisible("rhLive", ghsProcessor.getRiffHouse().getLiveState());
+
+    // A MIDI-learned scene trigger lands here (never written from the audio thread).
+    if (const int pending = ghsProcessor.getVisuals().consumePendingSceneIndex(); pending >= 0)
+        *ghsProcessor.getVisualSceneParameter() = pending;
+    webView->emitEventIfBrowserIsVisible("vzLive", ghsProcessor.getVisuals().getLiveState());
 
     if (!ghsProcessor.isCapturingTone() || ++toneTickDivider % 6 != 0)
         return;
@@ -166,6 +176,10 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::riffhouse_js, BinaryData::riffhouse_jsSize, "text/javascript");
     if (path == "riffhouse.css")
         return makeResource(BinaryData::riffhouse_css, BinaryData::riffhouse_cssSize, "text/css");
+    if (path == "visuals.js")
+        return makeResource(BinaryData::visuals_js, BinaryData::visuals_jsSize, "text/javascript");
+    if (path == "visuals.css")
+        return makeResource(BinaryData::visuals_css, BinaryData::visuals_cssSize, "text/css");
 
     return std::nullopt;
 }
@@ -573,4 +587,95 @@ juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addRiffHouseFunctions(
             });
         });
     return options;
+}
+
+// ============================== Visuals ======================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addVisualsFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+
+    options = options
+        .withNativeFunction("vzGetParams", [this](Args, Done done) { done(handleVzGetParams()); })
+        .withNativeFunction("vzSetParam", [this](Args a, Done done) { handleVzSetParam(a); done({}); })
+        .withNativeFunction("vzMidiLearn", [this](Args a, Done done) { handleVzMidiLearn(a); done({}); })
+        .withNativeFunction("vzClearBinding", [this](Args a, Done done) { handleVzClearBinding(a); done({}); })
+        .withNativeFunction("vzEnterFullscreen", [this](Args, Done done) { handleVzEnterFullscreen(); done({}); })
+        .withNativeFunction("vzExitFullscreen", [this](Args, Done done) { handleVzExitFullscreen(); done({}); });
+    return options;
+}
+
+juce::var GHSFXCompanionEditor::handleVzGetParams()
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty("intensity", (double) ghsProcessor.getVisualIntensityParameter()->get());
+    o->setProperty("palette", ghsProcessor.getVisualPaletteParameter()->getIndex());
+    o->setProperty("scene", ghsProcessor.getVisualSceneParameter()->getIndex());
+
+    juce::Array<juce::var> paletteNames, sceneNames;
+    for (auto& s : ghsProcessor.getVisualPaletteParameter()->choices) paletteNames.add(s);
+    for (auto& s : ghsProcessor.getVisualSceneParameter()->choices) sceneNames.add(s);
+    o->setProperty("paletteNames", paletteNames);
+    o->setProperty("sceneNames", sceneNames);
+    return juce::var(o);
+}
+
+void GHSFXCompanionEditor::handleVzSetParam(const juce::Array<juce::var>& args)
+{
+    if (args.size() < 2) return;
+    const auto name = args[0].toString();
+    if (name == "intensity") *ghsProcessor.getVisualIntensityParameter() = (float) (double) args[1];
+    else if (name == "palette") *ghsProcessor.getVisualPaletteParameter() = (int) args[1];
+    else if (name == "scene") *ghsProcessor.getVisualSceneParameter() = (int) args[1];
+}
+
+void GHSFXCompanionEditor::handleVzMidiLearn(const juce::Array<juce::var>& args)
+{
+    ghsProcessor.getVisuals().armMidiLearn(args.size() > 0 ? (int) args[0] : -1);
+}
+
+void GHSFXCompanionEditor::handleVzClearBinding(const juce::Array<juce::var>& args)
+{
+    if (args.size() > 0)
+        ghsProcessor.getVisuals().clearBinding((int) args[0]);
+}
+
+void GHSFXCompanionEditor::handleVzEnterFullscreen()
+{
+    if (visualsFullscreen || webView == nullptr) return;
+    visualsFullscreen = true;
+
+    visualsWindow = std::make_unique<VisualsWindow>([this] { handleVzExitFullscreen(); });
+    removeChildComponent(webView.get());
+    visualsWindow->setContentNonOwned(webView.get(), false);
+    visualsWindow->setUsingNativeTitleBar(false);
+    visualsWindow->setResizable(false, false);
+
+    // Prefer a non-primary display (the projector/second-monitor use case).
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* primary = displays.getPrimaryDisplay();
+    const auto* target = primary;
+    for (auto& d : displays.displays)
+    {
+        if (&d != primary) { target = &d; break; }
+    }
+
+    if (target != nullptr)
+        visualsWindow->setBounds(target->totalArea);
+    visualsWindow->setVisible(true);
+    visualsWindow->setFullScreen(true);
+}
+
+void GHSFXCompanionEditor::handleVzExitFullscreen()
+{
+    if (!visualsFullscreen) return;
+    visualsFullscreen = false;
+
+    if (visualsWindow != nullptr)
+        visualsWindow->clearContentComponent(); // non-owned - webView survives
+    visualsWindow.reset();
+
+    addAndMakeVisible(*webView);
+    resized();
 }
