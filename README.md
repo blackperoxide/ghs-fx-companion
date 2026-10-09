@@ -80,3 +80,7 @@ reopen Logic once — first-time AU scans sometimes need that).
 
 Whatever happens — works, crashes, doesn't find plugins, wrong sound — tell
 me exactly what you see and I'll fix it from there.
+
+## Riff House: daily routine and journal
+
+See [docs/PRACTICE-ROUTINE.md](docs/PRACTICE-ROUTINE.md) for the Today tab (daily check-in, quests, weekly goals, practice log, journal) and `tools/riffhouse_batch.sh` for importing a folder of your own songs in one go.

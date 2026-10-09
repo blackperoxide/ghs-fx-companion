@@ -10,6 +10,7 @@ juce::File rootFolder()
     return f;
 }
 juce::File chartsFolder() { auto f = rootFolder().getChildFile("Charts"); f.createDirectory(); return f; }
+juce::File journalFolder() { auto f = rootFolder().getChildFile("Journal"); f.createDirectory(); return f; }
 juce::File inboxFolder()
 {
     auto f = juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("GHS").getChildFile("Inbox");

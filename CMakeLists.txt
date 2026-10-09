@@ -82,6 +82,8 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/app.js
         Resources/webui/riffhouse.js
         Resources/webui/riffhouse.css
+        Resources/webui/routine.js
+        Resources/webui/routine.css
         Resources/webui/visuals.js
         Resources/webui/visuals.css
 )

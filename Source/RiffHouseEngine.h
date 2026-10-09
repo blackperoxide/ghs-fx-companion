@@ -30,6 +30,7 @@ namespace RiffHouse
     juce::File rootFolder();   // ~/Music/GHS/RiffHouse
     juce::File chartsFolder(); // ~/Music/GHS/RiffHouse/Charts
     juce::File inboxFolder();  // ~/Music/GHS/Inbox
+    juce::File journalFolder(); // ~/Music/GHS/RiffHouse/Journal (practice log + program journal)
 
     /** YIN pitch estimate in Hz (0 if unvoiced). clarity is 1 - aperiodicity (0..1). */
     float detectPitchYin(const float* x, int n, double sampleRate, float& clarity, float minHz = 38.0f, float maxHz = 1400.0f);

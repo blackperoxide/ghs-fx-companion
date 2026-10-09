@@ -32,7 +32,7 @@
     ccSeen: new Map(),
     chart: null,
     charts: [],
-    pane: "play",
+    pane: "routine",
     waveform: null,
     settings: {
       latencyMs: 0,
@@ -95,14 +95,17 @@
       </div>
 
       <nav class="rh-subnav">
-        <button data-pane="play" class="on">Play</button>
+        <button data-pane="routine" class="on">Today</button>
+        <button data-pane="play">Play</button>
         <button data-pane="songs">Songs</button>
         <button data-pane="tuner">Tuner</button>
         <button data-pane="arcade">Note Ninja</button>
         <button data-pane="capture">Capture</button>
       </nav>
 
-      <section class="rh-pane on" id="rhPanePlay">
+      <section class="rh-pane on" id="rhPaneRoutine"></section>
+
+      <section class="rh-pane" id="rhPanePlay">
         <div class="rh-controls">
           <strong id="rhChartTitle">No chart loaded</strong>
           <span class="rh-spacer"></span>
@@ -179,6 +182,7 @@
   function initSubnav() {
     const buttons = Array.from(document.querySelectorAll(".rh-subnav button"));
     const panes = {
+      routine: document.getElementById("rhPaneRoutine"),
       play: document.getElementById("rhPanePlay"),
       songs: document.getElementById("rhPaneSongs"),
       tuner: document.getElementById("rhPaneTuner"),
@@ -192,6 +196,7 @@
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("on", k === RH.pane));
         if (RH.pane === "play" || RH.pane === "capture") requestAnimationFrame(resizeCanvases);
         if (RH.pane === "songs") refreshCharts();
+        if (RH.pane === "routine") window.dispatchEvent(new CustomEvent("rh:routine-shown"));
       });
     });
   }
@@ -673,7 +678,7 @@
     btn.classList.add("busy");
     callNative("rhSaveThat", 12, 120).then((res) => {
       btn.classList.remove("busy");
-      if (res && res.ok) showToast("Saved idea to Inbox", "success");
+      if (res && res.ok) { showToast("Saved idea to Inbox", "success"); window.dispatchEvent(new CustomEvent("rh:capture")); }
       else showToast("Could not save - try again", "error");
     });
   }
@@ -788,7 +793,7 @@
       const sec = parseFloat(document.getElementById("rhCapSeconds").value) || 12;
       const bpm = parseFloat(document.getElementById("rhCapBpm").value) || 120;
       callNative("rhSaveThat", sec, bpm).then((res) => {
-        if (res && res.ok) { showToast("Saved to Inbox", "success"); refreshWave(); }
+        if (res && res.ok) { showToast("Saved to Inbox", "success"); refreshWave(); window.dispatchEvent(new CustomEvent("rh:capture")); }
         else showToast("Save failed", "error");
       });
     });
@@ -837,6 +842,7 @@
   /* ---------------- boot ---------------- */
 
   function init() {
+    window.__RH = RH; // read-only window onto game state for routine.js (practice log)
     initViewSwitch();
     buildRoot();
     initSubnav();

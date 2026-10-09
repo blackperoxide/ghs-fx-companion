@@ -176,6 +176,10 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::riffhouse_js, BinaryData::riffhouse_jsSize, "text/javascript");
     if (path == "riffhouse.css")
         return makeResource(BinaryData::riffhouse_css, BinaryData::riffhouse_cssSize, "text/css");
+    if (path == "routine.js")
+        return makeResource(BinaryData::routine_js, BinaryData::routine_jsSize, "text/javascript");
+    if (path == "routine.css")
+        return makeResource(BinaryData::routine_css, BinaryData::routine_cssSize, "text/css");
     if (path == "visuals.js")
         return makeResource(BinaryData::visuals_js, BinaryData::visuals_jsSize, "text/javascript");
     if (path == "visuals.css")
@@ -563,6 +567,37 @@ juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addRiffHouseFunctions(
                 for (auto* prm : p->getParameters()) names.add(prm->getName(40));
             done(names);
         })
+        // ---- Routine tab: practice log + journal, stored as plain files in ~/Music/GHS/RiffHouse/Journal ----
+        .withNativeFunction("rhJournalLoad", [](Args, Done done)
+        {
+            const auto f = RiffHouse::journalFolder().getChildFile("journal.json");
+            done(f.existsAsFile() ? f.loadFileAsString() : juce::String());
+        })
+        .withNativeFunction("rhJournalSave", [arg](Args a, Done done)
+        {
+            // Atomic write (temp file + rename) and a rolling backup, so a crash or a closed DAW never costs an entry.
+            const auto text = arg(a, 0, "").toString();
+            auto* o = new juce::DynamicObject();
+            const auto f = RiffHouse::journalFolder().getChildFile("journal.json");
+            if (text.isEmpty()) { o->setProperty("ok", false); done(juce::var(o)); return; }
+            if (f.existsAsFile()) f.copyFileTo(RiffHouse::journalFolder().getChildFile("journal.backup.json"));
+            juce::TemporaryFile tf(f);
+            const bool ok = tf.getFile().replaceWithText(text) && tf.overwriteTargetFileWithTemporary();
+            o->setProperty("ok", ok);
+            o->setProperty("path", f.getFullPathName());
+            done(juce::var(o));
+        })
+        .withNativeFunction("rhJournalExport", [arg](Args a, Done done)
+        {
+            // Human-readable copies (Markdown) for the "what the program was like" record.
+            const auto name = juce::File::createLegalFileName(arg(a, 0, "Program-Log.md").toString());
+            const auto f = RiffHouse::journalFolder().getChildFile(name.isEmpty() ? juce::String("Program-Log.md") : name);
+            auto* o = new juce::DynamicObject();
+            o->setProperty("ok", f.replaceWithText(arg(a, 1, "").toString()));
+            o->setProperty("path", f.getFullPathName());
+            done(juce::var(o));
+        })
+        .withNativeFunction("rhJournalReveal", [](Args, Done done) { RiffHouse::journalFolder().startAsProcess(); done({}); })
         .withNativeFunction("rhRevealInbox", [](Args, Done done) { RiffHouse::inboxFolder().startAsProcess(); done({}); })
         .withNativeFunction("rhImport", [this](Args a, Done done)
         {
