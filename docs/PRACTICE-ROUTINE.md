@@ -33,9 +33,11 @@ Everything is stored as plain files in `~/Music/GHS/RiffHouse/Journal/`:
 
 ## Before you leave (one-time, in this order)
 
-1. Update and rebuild: `git fetch && git checkout riffhouse-routine && ./rebuild.sh`
-   (the Standalone app is built too, so you do not need a DAW open to practice).
-   Done when: Riff House opens and the first tab is **Today**.
+1. In Terminal, from the repo folder, run `tools/riffhouse_mac_setup.sh`. It switches to
+   the `riffhouse-routine` branch, rebuilds (including the Standalone app, so you do not
+   need a DAW open to practice), installs the song-import tools, and prints PASS or FAIL
+   for each check. Re-run `tools/riffhouse_mac_setup.sh --verify` any time.
+   Done when: it says all automatic checks passed and Riff House opens on **Today**.
 2. Put your own songs in one folder as mp3 or wav, one file per song.
    Start with 3 to 5 songs, not 30.
 3. Run the importer once: `tools/riffhouse_batch.sh ~/Music/MySongs`

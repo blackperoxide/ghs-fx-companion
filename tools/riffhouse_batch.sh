@@ -16,6 +16,9 @@ if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
   exit 1
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
+PY="${RIFFHOUSE_PY:-}"
+[ -z "$PY" ] && [ -x "$HOME/.riffhouse-venv/bin/python" ] && PY="$HOME/.riffhouse-venv/bin/python"
+[ -z "$PY" ] && PY=python3
 OUT="$HOME/Music/GHS/RiffHouse/SongImports"
 ok=0; skipped=0; failed=0
 
@@ -27,7 +30,7 @@ for f in "$SRC"/*.mp3 "$SRC"/*.wav "$SRC"/*.m4a "$SRC"/*.flac "$SRC"/*.aif "$SRC
     echo "skip  $title (already imported)"; skipped=$((skipped+1)); continue
   fi
   echo "start $title"
-  if python3 "$HERE/riffhouse_import.py" "$f" --title "$title" --device auto; then
+  if "$PY" "$HERE/riffhouse_import.py" "$f" --title "$title" --device auto; then
     ok=$((ok+1)); echo "done  $title"
   else
     failed=$((failed+1)); echo "FAILED $title (keep going)" >&2
