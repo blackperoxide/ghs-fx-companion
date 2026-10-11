@@ -127,9 +127,11 @@ private:
 
     std::unique_ptr<juce::FileChooser> recipeFileChooser;
     std::unique_ptr<juce::FileChooser> riffFileChooser;
+    std::unique_ptr<juce::FileChooser> studioFileChooser;
     int toneTickDivider = 0;
 
     juce::WebBrowserComponent::Options& addRiffHouseFunctions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addStudioFunctions(juce::WebBrowserComponent::Options& options);
     juce::WebBrowserComponent::Options& addVisualsFunctions(juce::WebBrowserComponent::Options& options);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)

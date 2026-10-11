@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
 #include "PluginDatabase.h"
+#include "StudioEngine.h"
 #include "BinaryData.h"
 #include <algorithm>
 #include <cstring>
@@ -112,6 +113,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
                 completion({});
             });
     addRiffHouseFunctions(options);
+    addStudioFunctions(options);
     addVisualsFunctions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
@@ -180,6 +182,12 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::routine_js, BinaryData::routine_jsSize, "text/javascript");
     if (path == "routine.css")
         return makeResource(BinaryData::routine_css, BinaryData::routine_cssSize, "text/css");
+    if (path == "studio.js")
+        return makeResource(BinaryData::studio_js, BinaryData::studio_jsSize, "text/javascript");
+    if (path == "studio-lattice.js")
+        return makeResource(BinaryData::studiolattice_js, BinaryData::studiolattice_jsSize, "text/javascript");
+    if (path == "studio.css")
+        return makeResource(BinaryData::studio_css, BinaryData::studio_cssSize, "text/css");
     if (path == "visuals.js")
         return makeResource(BinaryData::visuals_js, BinaryData::visuals_jsSize, "text/javascript");
     if (path == "visuals.css")
@@ -619,6 +627,48 @@ juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addRiffHouseFunctions(
                 if (folder) engine.importSongFolderAsync(f, done);
                 else if (f.hasFileExtension("mid;midi")) done(engine.importMidi(f, instrument));
                 else engine.importAudioAsync(f, instrument, done);
+            });
+        });
+    return options;
+}
+
+// ============================== Studio launchpad =============================
+// File work lives in Source/StudioEngine.*; these are thin wrappers for the webview.
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addStudioFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+
+    options = options
+        .withNativeFunction("stLoadConfig", [](Args, Done done) { done(Studio::loadConfig()); })
+        .withNativeFunction("stSaveConfig", [arg](Args a, Done done) { done(Studio::saveConfig(arg(a, 0, "").toString())); })
+        .withNativeFunction("stListSongs", [](Args, Done done) { done(Studio::listSongs()); })
+        .withNativeFunction("stCreateSong", [arg](Args a, Done done)
+            { done(Studio::createSong(arg(a, 0, "").toString(), (double) arg(a, 1, 0.0), arg(a, 2, "").toString())); })
+        .withNativeFunction("stUpdateSong", [arg](Args a, Done done)
+            { done(Studio::updateSong(arg(a, 0, "").toString(), arg(a, 1, "{}").toString())); })
+        .withNativeFunction("stScanDrop", [](Args, Done done) { done(Studio::scanDrop()); })
+        .withNativeFunction("stStartSession", [arg](Args a, Done done)
+            { done(Studio::startSession(arg(a, 0, "").toString(), arg(a, 1, "").toString(), arg(a, 2, "").toString())); })
+        .withNativeFunction("stOpen", [arg](Args a, Done done) { done(Studio::openPath(arg(a, 0, "").toString())); })
+        .withNativeFunction("stReveal", [arg](Args a, Done done) { done(Studio::revealPath(arg(a, 0, "").toString())); })
+        .withNativeFunction("stOpenUrl", [arg](Args a, Done done) { done(Studio::openUrl(arg(a, 0, "").toString())); })
+        .withNativeFunction("stExists", [arg](Args a, Done done) { done(Studio::pathExists(arg(a, 0, "").toString())); })
+        .withNativeFunction("stPickTemplate", [this, arg](Args a, Done done)
+        {
+            // kind: "file" (also picks packages like .logicx / .als) or "folder"
+            const bool folder = arg(a, 0, "file").toString() == "folder";
+            studioFileChooser = std::make_unique<juce::FileChooser>(
+                folder ? "Choose a template folder" : "Choose a DAW template (Logic, Ableton, Luna ...)",
+                juce::File::getSpecialLocation(juce::File::userDocumentsDirectory));
+            const int flags = juce::FileBrowserComponent::openMode
+                              | (folder ? juce::FileBrowserComponent::canSelectDirectories : juce::FileBrowserComponent::canSelectFiles);
+            studioFileChooser->launchAsync(flags, [done](const juce::FileChooser& fc)
+            {
+                const auto f = fc.getResult();
+                done(f == juce::File() ? juce::String() : f.getFullPathName());
             });
         });
     return options;

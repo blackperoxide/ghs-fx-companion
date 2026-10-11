@@ -64,6 +64,7 @@
 
   function initViewSwitch() {
     const tabs = [
+      { nav: "navStudio", view: "view-studio" },
       { nav: "navRack", view: "view-rack" },
       { nav: "navRiffHouse", view: "view-riffhouse" },
       { nav: "navVisuals", view: "view-visuals" },

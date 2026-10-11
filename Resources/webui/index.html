@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="style.css" />
 <link rel="stylesheet" href="riffhouse.css" />
 <link rel="stylesheet" href="routine.css" />
+<link rel="stylesheet" href="studio.css" />
 <link rel="stylesheet" href="visuals.css" />
 </head>
 <body>
@@ -19,7 +20,8 @@
     </div>
     <div class="topbar-actions">
       <nav class="view-switch">
-        <button id="navRack" class="view-switch-btn on">Rack</button>
+        <button id="navStudio" class="view-switch-btn on">Studio</button>
+        <button id="navRack" class="view-switch-btn">Rack</button>
         <button id="navRiffHouse" class="view-switch-btn">Riff House</button>
         <button id="navVisuals" class="view-switch-btn">Visuals</button>
       </nav>
@@ -33,7 +35,11 @@
 
   <div id="toasts" class="toasts"></div>
 
-  <div id="view-rack" class="view on">
+  <div id="view-studio" class="view on">
+    <div id="stRoot"></div>
+  </div>
+
+  <div id="view-rack" class="view">
   <main class="layout">
 
     <section class="panel browser">
@@ -78,6 +84,8 @@
 <script src="app.js"></script>
 <script src="riffhouse.js"></script>
 <script src="routine.js"></script>
+<script src="studio-lattice.js"></script>
+<script src="studio.js"></script>
 <script src="visuals.js"></script>
 </body>
 </html>

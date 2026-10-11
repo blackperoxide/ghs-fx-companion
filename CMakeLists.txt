@@ -57,6 +57,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/ToneAnalyzer.cpp
     Source/ToneRecommendation.cpp
     Source/RiffHouseEngine.cpp
+    Source/StudioEngine.cpp
     Source/VisualsEngine.cpp
 )
 
@@ -84,6 +85,9 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/riffhouse.css
         Resources/webui/routine.js
         Resources/webui/routine.css
+        Resources/webui/studio.js
+        Resources/webui/studio.css
+        Resources/webui/studio-lattice.js
         Resources/webui/visuals.js
         Resources/webui/visuals.css
 )
