@@ -6,6 +6,7 @@
 #include "ToneRecommendation.h"
 #include "RiffHouseEngine.h"
 #include "VisualsEngine.h"
+#include "Console1Engine.h"
 
 /**
  * Milestone 2: this processor hosts a bounded rack of third-party plugins in
@@ -80,7 +81,8 @@ public:
      */
     void loadPluginIntoSlot(int slotIndex,
                              const juce::PluginDescription& description,
-                             std::function<void(const juce::String& errorMessage)> onComplete);
+                             std::function<void(const juce::String& errorMessage)> onComplete,
+                             bool notifyController = true);
 
     void unloadSlot(int slotIndex);
 
@@ -128,6 +130,9 @@ public:
     juce::AudioParameterChoice* getVisualPaletteParameter() const { return visualPaletteParam; }
     juce::AudioParameterChoice* getVisualSceneParameter() const { return visualSceneParam; }
 
+    /** Console 1 / hardware controller mapping onto hosted plugins (see Console1Engine.h). */
+    Console1::Engine& getConsole1() { return *console1; }
+
 private:
     RiffHouse::Engine riffHouse;
     Visuals::Engine visuals;
@@ -154,6 +159,9 @@ private:
     std::array<ChainSlot, maxChainSlots> chain;
 
     GHSToneAnalyzer::Recorder toneRecorder;
+
+    // Declared after `chain` so it's destroyed first (its timer reads the slots).
+    std::unique_ptr<Console1::Engine> console1;
 
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;

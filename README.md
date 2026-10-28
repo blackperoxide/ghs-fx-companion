@@ -84,3 +84,10 @@ me exactly what you see and I'll fix it from there.
 ## Riff House: daily routine and journal
 
 See [docs/PRACTICE-ROUTINE.md](docs/PRACTICE-ROUTINE.md) for the Today tab (daily check-in, quests, weekly goals, practice log, journal) and `tools/riffhouse_batch.sh` for importing a folder of your own songs in one go.
+
+## Console 1 controller (in progress)
+
+The Console 1 tab lets a Softube Console 1 Mk I control the plugins in the Rack: pick a knob on the on-screen
+map, press Assign or Learn, or let "Suggest a layout" map a whole EQ or compressor. Each plugin's knob layout can
+be saved and comes back by itself next time. Setup steps, the home test and a troubleshooting list are in
+`docs/CONSOLE1.md`. Not yet tested on the real hardware or on macOS.

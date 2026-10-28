@@ -1,4 +1,14 @@
-# Handoff: GHS FX Companion, Studio launchpad branch
+# Handoff: GHS FX Companion
+
+## Newest work: Console 1 controller (branch `console1-controller`, off `studio-launchpad`)
+Read `docs/CONSOLE1.md`. Console 1 Mk I as hands-on knobs for hosted plugins: on-screen map, Learn, auto-map
+suggestions, per-plugin profiles, ring/LED feedback, simulator. Built while Shawn was away from his hardware:
+verified in a Linux sandbox only (engine tests 52 pass incl. ASan/UBSan, real engine behind the real UI in
+headless Chromium). NOT verified: macOS build, JUCE webview, physical MIDI port, rings on hardware, real
+plugin parameter names. First job when he's home: the "Home test" in docs/CONSOLE1.md, then fix in the
+order of its troubleshooting list. Treat the CC table as an assumption until the MIDI Monitor confirms it.
+
+# Studio launchpad branch (previous work)
 
 Read this first. Owner: Shawn (musician, combat veteran with TBI and executive dysfunction).
 His product goal: one calm dashboard that helps him finish songs. Suno export -> DAW (Logic / Luna / Ableton)

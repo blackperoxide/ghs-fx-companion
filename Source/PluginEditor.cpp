@@ -115,6 +115,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     addRiffHouseFunctions(options);
     addStudioFunctions(options);
     addVisualsFunctions(options);
+    addConsole1Functions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
     addAndMakeVisible(*webView);
@@ -123,6 +124,10 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     setResizable(true, true);
     setSize(1100, 720);
     startTimerHz(30);
+
+    // Opening a GHS window is the natural "I'm working on this track now" signal:
+    // this instance takes over the Console 1 (device input + ring/LED feedback).
+    ghsProcessor.getConsole1().takeControl();
 }
 
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
@@ -153,6 +158,7 @@ void GHSFXCompanionEditor::timerCallback()
     if (const int pending = ghsProcessor.getVisuals().consumePendingSceneIndex(); pending >= 0)
         *ghsProcessor.getVisualSceneParameter() = pending;
     webView->emitEventIfBrowserIsVisible("vzLive", ghsProcessor.getVisuals().getLiveState());
+    webView->emitEventIfBrowserIsVisible("c1Live", ghsProcessor.getConsole1().getLiveState());
 
     if (!ghsProcessor.isCapturingTone() || ++toneTickDivider % 6 != 0)
         return;
@@ -192,6 +198,12 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::visuals_js, BinaryData::visuals_jsSize, "text/javascript");
     if (path == "visuals.css")
         return makeResource(BinaryData::visuals_css, BinaryData::visuals_cssSize, "text/css");
+    if (path == "console1.js")
+        return makeResource(BinaryData::console1_js, BinaryData::console1_jsSize, "text/javascript");
+    if (path == "console1-automap.js")
+        return makeResource(BinaryData::console1automap_js, BinaryData::console1automap_jsSize, "text/javascript");
+    if (path == "console1.css")
+        return makeResource(BinaryData::console1_css, BinaryData::console1_cssSize, "text/css");
 
     return std::nullopt;
 }
@@ -763,4 +775,34 @@ void GHSFXCompanionEditor::handleVzExitFullscreen()
 
     addAndMakeVisible(*webView);
     resized();
+}
+
+// ============================== Console 1 ====================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addConsole1Functions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+    auto& c1 = ghsProcessor.getConsole1();
+
+    // Everything the engine can answer by itself goes through one dispatcher
+    // (Console1::Engine::invoke), shared with the headless UI test server.
+    for (const auto& fnName : Console1::Engine::bridgeFunctionNames())
+        options = options.withNativeFunction(fnName, [&c1, fnName](Args a, Done done) { done(c1.invoke(fnName, a)); });
+
+    options = options
+        .withNativeFunction("c1RevealProfiles", [](Args, Done done)
+            {
+                auto folder = Console1::Engine::profilesFolder();
+                folder.createDirectory();
+                folder.revealToUser();
+                done({});
+            })
+        .withNativeFunction("c1OpenEditor", [this, arg](Args a, Done done)
+            {
+                handleOpenHostedEditor(juce::Array<juce::var> { arg(a, 0, 0) });
+                done({});
+            });
+    return options;
 }

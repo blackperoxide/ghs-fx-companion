@@ -68,6 +68,7 @@
       { nav: "navRack", view: "view-rack" },
       { nav: "navRiffHouse", view: "view-riffhouse" },
       { nav: "navVisuals", view: "view-visuals" },
+      { nav: "navConsole1", view: "view-console1" },
     ];
     function show(viewId) {
       tabs.forEach((t) => {
@@ -77,6 +78,7 @@
       });
       if (viewId === "view-riffhouse") requestAnimationFrame(resizeCanvases);
       if (viewId === "view-visuals" && window.VZ) requestAnimationFrame(window.VZ.resize);
+      if (viewId === "view-console1" && window.C1) window.C1.onShow();
     }
     tabs.forEach((t) => document.getElementById(t.nav).addEventListener("click", () => show(t.view)));
   }

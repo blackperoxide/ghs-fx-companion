@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Loads the real index.html into this page with a stand-in JUCE bridge (see tools/console1_ui_server.cpp). -->
+<html><head><meta charset="utf-8"><title>Console 1 UI test</title>
+<script>
+(function () {
+  const listeners = {};
+  window.__JUCE__ = { backend: {
+    addEventListener(id, fn) { (listeners[id] = listeners[id] || []).push(fn); return [id, fn]; },
+    removeEventListener() {},
+    emitEvent(id, payload) {
+      if (id !== "__juce__invoke") return;
+      const fire = (result) => (listeners["__juce__complete"] || []).forEach((fn) => fn({ promiseId: payload.resultId, result }));
+      if (!payload.name.startsWith("c1")) { setTimeout(() => fire(null), 0); return; } // other tabs: nothing in this harness
+      fetch("/invoke", { method: "POST", body: JSON.stringify({ name: payload.name, params: payload.params }) })
+        .then((r) => r.json()).then(fire, () => fire(null));
+    },
+  }, initialisationData: {} };
+  setInterval(() => {
+    fetch("/live").then((r) => r.json()).then((live) => (listeners["c1Live"] || []).forEach((fn) => fn(live)), () => {});
+  }, 33);
+})();
+</script>
+</head><body>
+<script>
+// Pull the real app markup in, then its stylesheets and scripts, in order.
+fetch("/index.html").then((r) => r.text()).then(async (html) => {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("link[rel=stylesheet]").forEach((l) => { const n = document.createElement("link"); n.rel = "stylesheet"; n.href = l.getAttribute("href"); document.head.appendChild(n); });
+  const scripts = [...doc.querySelectorAll("script[src]")].map((s) => s.getAttribute("src"));
+  doc.querySelectorAll("script").forEach((s) => s.remove());
+  document.body.innerHTML = doc.body.innerHTML;
+  for (const src of scripts) await new Promise((ok) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = ok; document.body.appendChild(s); });
+  window.__harnessReady = true;
+});
+</script>
+</body></html>

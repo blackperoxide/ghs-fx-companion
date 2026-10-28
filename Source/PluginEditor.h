@@ -133,6 +133,7 @@ private:
     juce::WebBrowserComponent::Options& addRiffHouseFunctions(juce::WebBrowserComponent::Options& options);
     juce::WebBrowserComponent::Options& addStudioFunctions(juce::WebBrowserComponent::Options& options);
     juce::WebBrowserComponent::Options& addVisualsFunctions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addConsole1Functions(juce::WebBrowserComponent::Options& options);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)
 };

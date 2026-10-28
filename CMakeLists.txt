@@ -59,6 +59,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/RiffHouseEngine.cpp
     Source/StudioEngine.cpp
     Source/VisualsEngine.cpp
+    Source/Console1Engine.cpp
 )
 
 # plugin_database.json: the same categorized real-plugin database the
@@ -90,6 +91,9 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/studio-lattice.js
         Resources/webui/visuals.js
         Resources/webui/visuals.css
+        Resources/webui/console1.js
+        Resources/webui/console1-automap.js
+        Resources/webui/console1.css
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC
