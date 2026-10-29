@@ -89,5 +89,30 @@ See [docs/PRACTICE-ROUTINE.md](docs/PRACTICE-ROUTINE.md) for the Today tab (dail
 
 The Console 1 tab lets a Softube Console 1 Mk I control the plugins in the Rack: pick a knob on the on-screen
 map, press Assign or Learn, or let "Suggest a layout" map a whole EQ or compressor. Each plugin's knob layout can
-be saved and comes back by itself next time. Setup steps, the home test and a troubleshooting list are in
-`docs/CONSOLE1.md`. Not yet tested on the real hardware or on macOS.
+be saved and comes back by itself next time. Not yet tested on the real hardware or on macOS.
+
+### Console 1 home test (about 10 minutes)
+
+Do these in order. If a step fails, stop there: the troubleshooting list in
+[docs/CONSOLE1.md](docs/CONSOLE1.md) follows the same order.
+
+1. Get the branch and build it:
+   ```
+   git fetch
+   git checkout console1-controller
+   ./rebuild.sh
+   ```
+   If the build fails, copy only the first error.
+2. Open Softube's Console 1 On-Screen Display, open its menu and turn on
+   "Use Mk I/II as MIDI Controllers".
+3. Open GHS in your DAW and go to the Console 1 tab. The top should say
+   "Console 1 connected". If it doesn't, pick the port under Setup > Ports.
+4. Open the MIDI Monitor pane and turn the Comp Threshold knob. You should see
+   CC 47 with changing values.
+5. Load any EQ in Rack slot 1. On the Map pane: slot 1, Suggest, EQ section, Apply.
+6. Turn Low Gain on the hardware. The plugin's band 1 gain should move.
+7. Move that gain with the mouse in the plugin. The ring on the hardware should follow.
+8. Press "Save as this plugin's profile". Remove the plugin and load it again:
+   the knobs should come back by themselves.
+
+The same steps are in the tab's Setup pane.

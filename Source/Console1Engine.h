@@ -273,6 +273,7 @@ namespace Console1
         std::array<int, 16 * 128> hwValue;
         std::array<int, 16 * 128> sentValue;
         std::array<double, 16 * 128> lastTouchMs;
+        std::array<double, 16 * 128> lastSentMs;  // echo guard: see handleCc()
         juce::uint32 seenGeneration = 0;
         int lastFocusLed = -1;
 

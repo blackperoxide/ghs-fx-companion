@@ -22,7 +22,9 @@ parameters. The CC layout comes from Ardour's open-source Console 1 surface
 - Ring and LED feedback: when the plugin moves (mouse, automation, preset), GHS sends the value back so the ring
   follows. It waits 250 ms after you touch a knob so it doesn't fight your hand.
 - Per-plugin profiles: "Save as this plugin's profile" writes one small JSON file per plugin. Next time that
-  plugin is loaded into any slot, its knobs come back by themselves. The AU and VST3 of a plugin share one profile.
+  plugin is loaded into any slot, its knobs come back by themselves. The profile file is named after the plugin's
+  maker and name. The AU and VST3 of a plugin share it only if both formats report the same maker and name; check
+  the profiles folder if one format doesn't pick it up.
   The previous version is kept as `<name>.previous.json`.
 - The mapping is also saved inside the DAW session.
 
@@ -109,12 +111,23 @@ The same list is in the Setup pane.
 
 ## Known limits
 
+- Echo guard: if the Console 1 sends back a value GHS just sent it (within 120 ms), GHS ignores it, so ring
+  updates can't nudge a parameter. Not testable without the hardware.
+- Unplug/replug: GHS checks every 2 seconds whether the open port still exists, closes it if not, and reopens
+  when the Console 1 comes back. Not testable without the hardware.
+
 - Parameter moves made from the Console 1 are not exposed as DAW automation of GHS (hosted parameters aren't
   published to the host). Automating inside the hosted plugin works if the DAW sees it; otherwise record with GHS's
   own tools later.
 - GHS doesn't drive the Console 1's own display or Softube's On-Screen Display. The tab's "last touched" line and
   the on-screen map do that job.
 - An existing race in the Rack (plugins swapped on the message thread while audio runs) is unchanged by this work.
+- Loading a chain preset or session that contains Console 1 mappings replaces all mappings, including those of
+  slots the preset doesn't touch. Older presets without mappings leave them alone and pull plugin profiles.
+- Session restore assumes the DAW calls setStateInformation on the main thread (Logic does). This was already
+  true of the Rack before this feature.
+- The 30 Hz live update to the web UI runs whenever a GHS window is open, even on other tabs. Cheap, but it can be
+  limited to the Console 1 tab if the window ever feels slow.
 - Nothing here has been built or run on macOS yet.
 
 ## What has been verified (Linux sandbox, JUCE 8.0.4)

@@ -258,6 +258,34 @@ void DeviceHub::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMess
 
 void DeviceHub::timerCallback()
 {
+    // Unplugged? An open port whose device has gone away is closed here, so the
+    // reopen below picks the Console 1 up again when it comes back.
+    juce::String inId, outId;
+    {
+        std::lock_guard<std::mutex> g(lock);
+        if (input != nullptr) inId = input->getIdentifier();
+        if (output != nullptr) outId = output->getIdentifier();
+    }
+    auto present = [](const juce::Array<juce::MidiDeviceInfo>& devices, const juce::String& id)
+    {
+        for (auto& d : devices) if (d.identifier == id) return true;
+        return false;
+    };
+    const bool inGone = inId.isNotEmpty() && !present(juce::MidiInput::getAvailableDevices(), inId);
+    const bool outGone = outId.isNotEmpty() && !present(juce::MidiOutput::getAvailableDevices(), outId);
+    if (inGone || outGone)
+    {
+        std::unique_ptr<juce::MidiInput> oldIn;
+        std::unique_ptr<juce::MidiOutput> oldOut;
+        {
+            std::lock_guard<std::mutex> g(lock);
+            if (inGone) oldIn = std::move(input);
+            if (outGone) oldOut = std::move(output);
+            generation++;
+        }
+        if (oldIn != nullptr) oldIn->stop(); // outside the lock, as in closePorts()
+    }
+
     bool missing;
     {
         std::lock_guard<std::mutex> g(lock);
@@ -329,6 +357,7 @@ Engine::Engine(Host h) : host(std::move(h))
     hwValue.fill(-1);
     sentValue.fill(-1);
     lastTouchMs.fill(0.0);
+    lastSentMs.fill(-1.0e9);
     for (auto& b : boundMask) b.store(false);
     hub->registerEngine(this);
     startTimerHz(60);
@@ -406,6 +435,14 @@ void Engine::timerCallback()
 void Engine::handleCc(int channel, int cc, int value, bool fromSimulator)
 {
     const int key = keyOf(channel, cc);
+
+    // Echo guard. Some controllers send back the value they were just given. If the
+    // Console 1 does, an echo of our ring update would land here as a "knob move" and
+    // snap the parameter to the 128-step ring value. A real knob arriving at exactly the
+    // value we sent, within 120 ms, changes nothing anyway, so dropping it is safe.
+    if (!fromSimulator && value == sentValue[(size_t) key] && nowMs() - lastSentMs[(size_t) key] < 120.0)
+        return;
+
     const int previousHw = hwValue[(size_t) key];
     hwValue[(size_t) key] = value;
     lastTouchMs[(size_t) key] = nowMs();
@@ -477,7 +514,6 @@ void Engine::handleCc(int channel, int cc, int value, bool fromSimulator)
         }
     }
 
-    juce::ignoreUnused(fromSimulator);
     lastTouch = { channel, cc, value, ++touchSerial, target };
     recent[(size_t) recentHead] = lastTouch;
     recentHead = (recentHead + 1) % (int) recent.size();
@@ -633,6 +669,7 @@ void Engine::applyBinding(Binding& b, int value, int previousHw)
         if (hub->send(b.channel == 0 ? 1 : b.channel, b.cc, ring))
         {
             sentValue[(size_t) key] = ring;
+            lastSentMs[(size_t) key] = nowMs();
             hwValue[(size_t) key] = ring;
         }
     }
@@ -652,7 +689,14 @@ void Engine::sendFeedback(bool force)
     if (trackButtonsFocusSlots && lastFocusLed != focusSlot)
     {
         for (int s = 0; s < host.numSlots; ++s)
-            hub->send(1, trackButtonFirstCc + s, s == focusSlot ? 127 : 0);
+        {
+            const int v = s == focusSlot ? 127 : 0;
+            if (hub->send(1, trackButtonFirstCc + s, v))
+            {
+                sentValue[(size_t) keyOf(1, trackButtonFirstCc + s)] = v;
+                lastSentMs[(size_t) keyOf(1, trackButtonFirstCc + s)] = t;
+            }
+        }
         lastFocusLed = focusSlot;
     }
 
@@ -693,6 +737,7 @@ void Engine::sendFeedback(bool force)
         if (hub->send(ch, b.cc, want))
         {
             sentValue[(size_t) key] = want;
+            lastSentMs[(size_t) key] = t;
             if (!Console1Math::isButtonMode(w.mode)) hwValue[(size_t) key] = want;
         }
     }
@@ -1074,8 +1119,8 @@ juce::File Engine::profilesFolder()
 
 juce::String Engine::profileKeyFor(const juce::PluginDescription& d)
 {
-    // Format-agnostic on purpose: the AU and VST3 of the same plugin share one profile
-    // (bindings re-resolve by parameter name if the ids differ between formats).
+    // Format-agnostic on purpose: the AU and VST3 of a plugin share one profile when both
+    // report the same maker + name (bindings re-resolve by parameter name if ids differ).
     auto key = (d.manufacturerName.isNotEmpty() ? d.manufacturerName + " - " : juce::String()) + d.name;
     return juce::File::createLegalFileName(key).replaceCharacter('/', '-');
 }
