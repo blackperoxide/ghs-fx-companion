@@ -28,6 +28,21 @@ GHSFXCompanionProcessor::GHSFXCompanionProcessor()
         addParameter(param);
         chain[(size_t) i].bypassParam = param;
     }
+
+    addParameter(visualIntensityParam = new juce::AudioParameterFloat(
+        { "visualIntensity", 1 }, "Visual Intensity", 0.0f, 1.0f, 0.8f));
+    addParameter(visualPaletteParam = new juce::AudioParameterChoice(
+        { "visualPalette", 1 }, "Visual Palette",
+        juce::StringArray { "Mono", "Neon", "Sunset", "Ice", "Fire" }, 0));
+    addParameter(visualSceneParam = new juce::AudioParameterChoice(
+        { "visualScene", 1 }, "Visual Scene",
+        juce::StringArray { "Bars", "Radial", "Scope" }, 0));
+
+    Console1::Engine::Host c1Host;
+    c1Host.numSlots = maxChainSlots;
+    c1Host.pluginInSlot = [this](int s) { return isValidSlot(s) ? chain[(size_t) s].plugin.get() : nullptr; };
+    c1Host.bypassForSlot = [this](int s) { return isValidSlot(s) ? chain[(size_t) s].bypassParam : nullptr; };
+    console1 = std::make_unique<Console1::Engine>(std::move(c1Host));
 }
 
 GHSFXCompanionProcessor::~GHSFXCompanionProcessor()
@@ -42,6 +57,8 @@ void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     currentBlockSize = samplesPerBlock;
 
     toneRecorder.prepare(sampleRate, juce::jmax(1, getMainBusNumInputChannels()));
+    riffHouse.prepare(sampleRate, samplesPerBlock);
+    visuals.prepare(sampleRate, samplesPerBlock);
 
     for (auto& slot : chain)
     {
@@ -82,6 +99,12 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // raw tone arriving on this track, not whatever the rack already does to it.
     toneRecorder.pushBlock(buffer);
 
+    // Console 1 CCs routed by the DAW to this track (device input is handled off the
+    // audio thread). Strips bound CCs so a hosted plugin's own MIDI learn can't double-react.
+    console1->processHostMidi(midiMessages);
+
+    riffHouse.processInput(buffer, midiMessages);
+
     // Same buffer threaded through every non-empty, non-bypassed slot in order -
     // that's the whole chain. Empty slots and bypassed slots are transparent.
     for (auto& slot : chain)
@@ -89,6 +112,23 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         if (slot.plugin != nullptr && !slot.bypassParam->get())
             slot.plugin->processBlock(buffer, midiMessages);
     }
+
+    // Monitoring through Apollo Console (Unison / zero latency)? Then the DAW must not
+    // hear the input again - output only the backing so nothing doubles or flams.
+    if (riffHouse.isMonitoringExternally())
+        buffer.clear();
+
+    // Backing track for Riff House goes in after the rack, so it never colours the tone.
+    riffHouse.renderBacking(buffer);
+
+    // Visuals reacts to the final signal actually heard (post-rack, post-backing),
+    // not the dry input toneRecorder/riffHouse characterize above.
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto pos = playHead->getPosition())
+            visuals.setTransportInfo(pos->getIsPlaying(), pos->getBpm().orFallback(120.0), pos->getPpqPosition().orFallback(0.0));
+    }
+    visuals.processInput(buffer, midiMessages);
 }
 
 juce::AudioProcessorEditor* GHSFXCompanionProcessor::createEditor()
@@ -109,7 +149,8 @@ juce::Array<juce::PluginDescription> GHSFXCompanionProcessor::loadKnownPlugins()
 
 void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
                                                   const juce::PluginDescription& description,
-                                                  std::function<void(const juce::String&)> onComplete)
+                                                  std::function<void(const juce::String&)> onComplete,
+                                                  bool notifyController)
 {
     // Must run on the message thread - createPluginInstanceAsync requires it,
     // and the callback below is guaranteed to also land back on it.
@@ -120,7 +161,7 @@ void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
         description,
         currentSampleRate,
         currentBlockSize,
-        [this, slotIndex, onComplete, pluginName = description.name](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
+        [this, slotIndex, onComplete, notifyController, pluginName = description.name](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
         {
             if (instance == nullptr)
             {
@@ -131,7 +172,14 @@ void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
 
             auto& slot = chain[(size_t) slotIndex];
 
-            unloadSlot(slotIndex);
+            // Release the old plugin directly rather than via unloadSlot(): that would
+            // also tell Console 1 the slot emptied and drop mappings a session restore
+            // just put back. slotLoaded() below handles the "different plugin" case.
+            if (slot.plugin != nullptr)
+            {
+                slot.plugin->releaseResources();
+                slot.plugin.reset();
+            }
             slot.plugin = std::move(instance);
 
             const auto requiredIns = getMainBusNumInputChannels();
@@ -149,6 +197,8 @@ void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
                 || slot.plugin->getTotalNumOutputChannels() != requiredOuts)
             {
                 slot.plugin.reset();
+                if (notifyController)
+                    console1->slotUnloaded(slotIndex);
 
                 if (onComplete)
                     onComplete(pluginName + " doesn't support "
@@ -158,6 +208,11 @@ void GHSFXCompanionProcessor::loadPluginIntoSlot(int slotIndex,
             }
 
             slot.plugin->prepareToPlay(currentSampleRate, currentBlockSize);
+
+            // New plugin in this slot: old knob mappings no longer mean anything here.
+            // Pulls in this plugin's saved Console 1 profile if there is one.
+            if (notifyController)
+                console1->slotLoaded(slotIndex);
 
             if (onComplete)
                 onComplete({});
@@ -173,6 +228,8 @@ void GHSFXCompanionProcessor::unloadSlot(int slotIndex)
     {
         slot.plugin->releaseResources();
         slot.plugin.reset();
+        if (console1 != nullptr)
+            console1->slotUnloaded(slotIndex);
     }
 }
 
@@ -192,6 +249,8 @@ void GHSFXCompanionProcessor::moveSlot(int fromIndex, int toIndex)
     const bool fromBypassed = from.bypassParam->get();
     *from.bypassParam = to.bypassParam->get();
     *to.bypassParam = fromBypassed;
+
+    console1->slotsSwapped(fromIndex, toIndex); // mappings follow their plugin
 }
 
 juce::AudioPluginInstance* GHSFXCompanionProcessor::getPluginInSlot(int slotIndex) const
@@ -228,6 +287,17 @@ juce::ValueTree GHSFXCompanionProcessor::chainStateToValueTree()
         state.addChild(slotState, -1, nullptr);
     }
 
+    juce::ValueTree visualsState("VisualsState");
+    visualsState.setProperty("intensity", visualIntensityParam->get(), nullptr);
+    visualsState.setProperty("palette", visualPaletteParam->getIndex(), nullptr);
+    visualsState.setProperty("scene", visualSceneParam->getIndex(), nullptr);
+    visualsState.setProperty("midiLearn", juce::JSON::toString(visuals.getMidiLearnState()), nullptr);
+    state.addChild(visualsState, -1, nullptr);
+
+    juce::ValueTree console1State("Console1State");
+    console1State.setProperty("json", juce::JSON::toString(console1->toVar()), nullptr);
+    state.addChild(console1State, -1, nullptr);
+
     return state;
 }
 
@@ -239,6 +309,22 @@ void GHSFXCompanionProcessor::applyChainStateValueTree(const juce::ValueTree& st
             onAllSlotsLoaded();
         return;
     }
+
+    if (const auto visualsState = state.getChildWithName("VisualsState"); visualsState.isValid())
+    {
+        *visualIntensityParam = (float) visualsState.getProperty("intensity", 0.8);
+        *visualPaletteParam = (int) visualsState.getProperty("palette", 0);
+        *visualSceneParam = (int) visualsState.getProperty("scene", 0);
+        visuals.setMidiLearnState(juce::JSON::parse(visualsState.getProperty("midiLearn", "{}").toString()));
+    }
+
+    // Console 1 mappings reference slots + parameter ids, resolved lazily, so they can be
+    // restored before the plugins finish loading. Without saved mappings (older sessions
+    // and presets), each loaded slot pulls its plugin's profile like a fresh load would.
+    const auto console1State = state.getChildWithName("Console1State");
+    const bool hasConsole1State = console1State.isValid();
+    if (hasConsole1State)
+        console1->fromVar(juce::JSON::parse(console1State.getProperty("json", "{}").toString()));
 
     auto known = loadKnownPlugins();
 
@@ -254,6 +340,15 @@ void GHSFXCompanionProcessor::applyChainStateValueTree(const juce::ValueTree& st
 
     for (const auto& slotState : state)
     {
+        // VisualsState (handled above) is a sibling child of the Slot entries this
+        // loop expects - skip it, but still count it down, or onAllSlotsLoaded would
+        // never fire (remaining was seeded from the *total* child count above).
+        if (slotState.getType() != juce::Identifier("Slot"))
+        {
+            finishOne();
+            continue;
+        }
+
         const int slotIndex = slotState.getProperty("index", -1);
         const auto identifier = slotState.getProperty("identifier").toString();
 
@@ -293,8 +388,9 @@ void GHSFXCompanionProcessor::applyChainStateValueTree(const juce::ValueTree& st
                 s.plugin->setStateInformation(s.pendingState.getData(), (int) s.pendingState.getSize());
 
             *s.bypassParam = bypass;
+            console1->slotStateRestored(slotIndex);
             finishOne();
-        });
+        }, !hasConsole1State);
     }
 }
 

@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginScanning.h"
 #include "PluginDatabase.h"
+#include "StudioEngine.h"
 #include "BinaryData.h"
 #include <algorithm>
 #include <cstring>
@@ -111,18 +112,30 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
                 handleOpenHostedEditor(args);
                 completion({});
             });
+    addRiffHouseFunctions(options);
+    addStudioFunctions(options);
+    addVisualsFunctions(options);
+    addConsole1Functions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
     addAndMakeVisible(*webView);
     webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
 
     setResizable(true, true);
-    setSize(920, 640);
+    setSize(1100, 720);
+    startTimerHz(30);
+
+    // Opening a GHS window is the natural "I'm working on this track now" signal:
+    // this instance takes over the Console 1 (device input + ring/LED feedback).
+    ghsProcessor.getConsole1().takeControl();
 }
 
 GHSFXCompanionEditor::~GHSFXCompanionEditor()
 {
     hostedEditorWindow.reset();
+    if (visualsWindow != nullptr)
+        visualsWindow->clearContentComponent(); // non-owned - don't let its destructor touch webView
+    visualsWindow.reset();
 }
 
 void GHSFXCompanionEditor::paint(juce::Graphics& g)
@@ -132,17 +145,23 @@ void GHSFXCompanionEditor::paint(juce::Graphics& g)
 
 void GHSFXCompanionEditor::resized()
 {
-    if (webView != nullptr)
+    // Fullscreen owns the webview's bounds while active - don't fight it.
+    if (webView != nullptr && !visualsFullscreen)
         webView->setBounds(getLocalBounds());
 }
 
 void GHSFXCompanionEditor::timerCallback()
 {
-    if (!ghsProcessor.isCapturingTone())
-    {
-        stopTimer();
+    webView->emitEventIfBrowserIsVisible("rhLive", ghsProcessor.getRiffHouse().getLiveState());
+
+    // A MIDI-learned scene trigger lands here (never written from the audio thread).
+    if (const int pending = ghsProcessor.getVisuals().consumePendingSceneIndex(); pending >= 0)
+        *ghsProcessor.getVisualSceneParameter() = pending;
+    webView->emitEventIfBrowserIsVisible("vzLive", ghsProcessor.getVisuals().getLiveState());
+    webView->emitEventIfBrowserIsVisible("c1Live", ghsProcessor.getConsole1().getLiveState());
+
+    if (!ghsProcessor.isCapturingTone() || ++toneTickDivider % 6 != 0)
         return;
-    }
 
     juce::DynamicObject::Ptr payload = new juce::DynamicObject();
     payload->setProperty("seconds", ghsProcessor.getToneCaptureSeconds());
@@ -161,6 +180,30 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::style_css, BinaryData::style_cssSize, "text/css");
     if (path == "app.js")
         return makeResource(BinaryData::app_js, BinaryData::app_jsSize, "text/javascript");
+    if (path == "riffhouse.js")
+        return makeResource(BinaryData::riffhouse_js, BinaryData::riffhouse_jsSize, "text/javascript");
+    if (path == "riffhouse.css")
+        return makeResource(BinaryData::riffhouse_css, BinaryData::riffhouse_cssSize, "text/css");
+    if (path == "routine.js")
+        return makeResource(BinaryData::routine_js, BinaryData::routine_jsSize, "text/javascript");
+    if (path == "routine.css")
+        return makeResource(BinaryData::routine_css, BinaryData::routine_cssSize, "text/css");
+    if (path == "studio.js")
+        return makeResource(BinaryData::studio_js, BinaryData::studio_jsSize, "text/javascript");
+    if (path == "studio-lattice.js")
+        return makeResource(BinaryData::studiolattice_js, BinaryData::studiolattice_jsSize, "text/javascript");
+    if (path == "studio.css")
+        return makeResource(BinaryData::studio_css, BinaryData::studio_cssSize, "text/css");
+    if (path == "visuals.js")
+        return makeResource(BinaryData::visuals_js, BinaryData::visuals_jsSize, "text/javascript");
+    if (path == "visuals.css")
+        return makeResource(BinaryData::visuals_css, BinaryData::visuals_cssSize, "text/css");
+    if (path == "console1.js")
+        return makeResource(BinaryData::console1_js, BinaryData::console1_jsSize, "text/javascript");
+    if (path == "console1-automap.js")
+        return makeResource(BinaryData::console1automap_js, BinaryData::console1automap_jsSize, "text/javascript");
+    if (path == "console1.css")
+        return makeResource(BinaryData::console1_css, BinaryData::console1_cssSize, "text/css");
 
     return std::nullopt;
 }
@@ -427,12 +470,10 @@ void GHSFXCompanionEditor::handleImportRecipe()
 void GHSFXCompanionEditor::handleStartToneCapture()
 {
     ghsProcessor.startToneCapture();
-    startTimer(200);
 }
 
 void GHSFXCompanionEditor::handleStopToneCaptureAndAnalyze(juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    stopTimer();
 
     ghsProcessor.stopToneCaptureAndAnalyze(
         [this, completion](std::vector<GHSToneRecommendation::SuggestedStage> stages, juce::String nearestVibeLabel)
@@ -506,4 +547,262 @@ void GHSFXCompanionEditor::handleOpenHostedEditor(const juce::Array<juce::var>& 
     hostedEditorWindow->setResizable(false, false);
     hostedEditorWindow->setVisible(true);
     hostedEditorWindow->centreAroundComponent(this, editorComponent->getWidth(), editorComponent->getHeight());
+}
+
+// ============================== Riff House ==================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addRiffHouseFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto& rh = ghsProcessor.getRiffHouse();
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+
+    options = options
+        .withNativeFunction("rhSaveThat", [&rh, arg](Args a, Done done) { done(rh.saveThat((double) arg(a, 0, 60.0), (double) arg(a, 1, 90.0))); })
+        .withNativeFunction("rhCaptureWave", [&rh, arg](Args a, Done done) { done(rh.getCaptureWave((int) arg(a, 0, 800))); })
+        .withNativeFunction("rhExportLoop", [&rh, arg](Args a, Done done) { done(rh.exportLoop(arg(a, 0, 0.0), arg(a, 1, 0.0), arg(a, 2, 90.0))); })
+        .withNativeFunction("rhExportSlices", [&rh, arg](Args a, Done done) { done(rh.exportSlices(arg(a, 0, 0.0), arg(a, 1, 0.0), arg(a, 2, 5.0), arg(a, 3, 90.0))); })
+        .withNativeFunction("rhListCharts", [&rh](Args, Done done) { done(rh.listCharts()); })
+        .withNativeFunction("rhLoadChart", [&rh, arg](Args a, Done done) { rh.loadChartAsync(arg(a, 0, "").toString(), (bool) arg(a, 1, false), (double) arg(a, 2, 1.0), done); })
+        .withNativeFunction("rhTransport", [&rh, arg](Args a, Done done) { rh.setTransport((bool) arg(a, 0, false), (double) arg(a, 1, 0.0), (float) (double) arg(a, 2, 0.8)); done({}); })
+        .withNativeFunction("rhSetRate", [&rh, arg](Args a, Done done) { rh.setRateAsync((double) arg(a, 0, 1.0), [done] { done({}); }); })
+        .withNativeFunction("rhMonitorExternally", [&rh, arg](Args a, Done done) { rh.setMonitorExternally((bool) arg(a, 0, false)); done({}); })
+        .withNativeFunction("rhSetParam", [this, arg](Args a, Done done)
+        {
+            // hardware knob -> hosted plugin parameter (MIDI learn lives in the UI)
+            if (auto* p = ghsProcessor.getPluginInSlot((int) arg(a, 0, 0)))
+            {
+                auto params = p->getParameters();
+                const int idx = (int) arg(a, 1, 0);
+                if (juce::isPositiveAndBelow(idx, params.size()))
+                    params[idx]->setValueNotifyingHost((float) (double) arg(a, 2, 0.0));
+            }
+            done({});
+        })
+        .withNativeFunction("rhParamList", [this, arg](Args a, Done done)
+        {
+            juce::Array<juce::var> names;
+            if (auto* p = ghsProcessor.getPluginInSlot((int) arg(a, 0, 0)))
+                for (auto* prm : p->getParameters()) names.add(prm->getName(40));
+            done(names);
+        })
+        // ---- Routine tab: practice log + journal, stored as plain files in ~/Music/GHS/RiffHouse/Journal ----
+        .withNativeFunction("rhJournalLoad", [](Args, Done done)
+        {
+            const auto f = RiffHouse::journalFolder().getChildFile("journal.json");
+            done(f.existsAsFile() ? f.loadFileAsString() : juce::String());
+        })
+        .withNativeFunction("rhJournalSave", [arg](Args a, Done done)
+        {
+            // Atomic write (temp file + rename) and a rolling backup, so a crash or a closed DAW never costs an entry.
+            const auto text = arg(a, 0, "").toString();
+            auto* o = new juce::DynamicObject();
+            const auto f = RiffHouse::journalFolder().getChildFile("journal.json");
+            if (text.isEmpty()) { o->setProperty("ok", false); done(juce::var(o)); return; }
+            if (f.existsAsFile()) f.copyFileTo(RiffHouse::journalFolder().getChildFile("journal.backup.json"));
+            juce::TemporaryFile tf(f);
+            const bool ok = tf.getFile().replaceWithText(text) && tf.overwriteTargetFileWithTemporary();
+            o->setProperty("ok", ok);
+            o->setProperty("path", f.getFullPathName());
+            done(juce::var(o));
+        })
+        .withNativeFunction("rhJournalExport", [arg](Args a, Done done)
+        {
+            // Human-readable copies (Markdown) for the "what the program was like" record.
+            const auto name = juce::File::createLegalFileName(arg(a, 0, "Program-Log.md").toString());
+            const auto f = RiffHouse::journalFolder().getChildFile(name.isEmpty() ? juce::String("Program-Log.md") : name);
+            auto* o = new juce::DynamicObject();
+            o->setProperty("ok", f.replaceWithText(arg(a, 1, "").toString()));
+            o->setProperty("path", f.getFullPathName());
+            done(juce::var(o));
+        })
+        .withNativeFunction("rhJournalReveal", [](Args, Done done) { RiffHouse::journalFolder().startAsProcess(); done({}); })
+        .withNativeFunction("rhRevealInbox", [](Args, Done done) { RiffHouse::inboxFolder().startAsProcess(); done({}); })
+        .withNativeFunction("rhImport", [this](Args a, Done done)
+        {
+            // kind: "file" (audio or MIDI) or "folder" (song folder from tools/riffhouse_import.py)
+            const auto kind = a.size() > 0 ? a[0].toString() : juce::String("file");
+            const auto instrument = a.size() > 1 ? a[1].toString() : juce::String("guitar");
+            const bool folder = kind == "folder";
+            riffFileChooser = std::make_unique<juce::FileChooser>(
+                folder ? "Choose a Riff House song folder" : "Choose a song, stem or MIDI file",
+                juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+                folder ? juce::String() : juce::String("*.wav;*.aif;*.aiff;*.flac;*.mp3;*.m4a;*.ogg;*.mid;*.midi"));
+            const int flags = juce::FileBrowserComponent::openMode
+                              | (folder ? juce::FileBrowserComponent::canSelectDirectories : juce::FileBrowserComponent::canSelectFiles);
+            riffFileChooser->launchAsync(flags, [this, done, folder, instrument](const juce::FileChooser& fc)
+            {
+                auto f = fc.getResult();
+                auto& engine = ghsProcessor.getRiffHouse();
+                if (f == juce::File()) { done({}); return; }
+                if (folder) engine.importSongFolderAsync(f, done);
+                else if (f.hasFileExtension("mid;midi")) done(engine.importMidi(f, instrument));
+                else engine.importAudioAsync(f, instrument, done);
+            });
+        });
+    return options;
+}
+
+// ============================== Studio launchpad =============================
+// File work lives in Source/StudioEngine.*; these are thin wrappers for the webview.
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addStudioFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+
+    options = options
+        .withNativeFunction("stLoadConfig", [](Args, Done done) { done(Studio::loadConfig()); })
+        .withNativeFunction("stSaveConfig", [arg](Args a, Done done) { done(Studio::saveConfig(arg(a, 0, "").toString())); })
+        .withNativeFunction("stListSongs", [](Args, Done done) { done(Studio::listSongs()); })
+        .withNativeFunction("stCreateSong", [arg](Args a, Done done)
+            { done(Studio::createSong(arg(a, 0, "").toString(), (double) arg(a, 1, 0.0), arg(a, 2, "").toString())); })
+        .withNativeFunction("stUpdateSong", [arg](Args a, Done done)
+            { done(Studio::updateSong(arg(a, 0, "").toString(), arg(a, 1, "{}").toString())); })
+        .withNativeFunction("stScanDrop", [](Args, Done done) { done(Studio::scanDrop()); })
+        .withNativeFunction("stStartSession", [arg](Args a, Done done)
+            { done(Studio::startSession(arg(a, 0, "").toString(), arg(a, 1, "").toString(), arg(a, 2, "").toString())); })
+        .withNativeFunction("stOpen", [arg](Args a, Done done) { done(Studio::openPath(arg(a, 0, "").toString())); })
+        .withNativeFunction("stReveal", [arg](Args a, Done done) { done(Studio::revealPath(arg(a, 0, "").toString())); })
+        .withNativeFunction("stOpenUrl", [arg](Args a, Done done) { done(Studio::openUrl(arg(a, 0, "").toString())); })
+        .withNativeFunction("stExists", [arg](Args a, Done done) { done(Studio::pathExists(arg(a, 0, "").toString())); })
+        .withNativeFunction("stPickTemplate", [this, arg](Args a, Done done)
+        {
+            // kind: "file" (also picks packages like .logicx / .als) or "folder"
+            const bool folder = arg(a, 0, "file").toString() == "folder";
+            studioFileChooser = std::make_unique<juce::FileChooser>(
+                folder ? "Choose a template folder" : "Choose a DAW template (Logic, Ableton, Luna ...)",
+                juce::File::getSpecialLocation(juce::File::userDocumentsDirectory));
+            const int flags = juce::FileBrowserComponent::openMode
+                              | (folder ? juce::FileBrowserComponent::canSelectDirectories : juce::FileBrowserComponent::canSelectFiles);
+            studioFileChooser->launchAsync(flags, [done](const juce::FileChooser& fc)
+            {
+                const auto f = fc.getResult();
+                done(f == juce::File() ? juce::String() : f.getFullPathName());
+            });
+        });
+    return options;
+}
+
+// ============================== Visuals ======================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addVisualsFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+
+    options = options
+        .withNativeFunction("vzGetParams", [this](Args, Done done) { done(handleVzGetParams()); })
+        .withNativeFunction("vzSetParam", [this](Args a, Done done) { handleVzSetParam(a); done({}); })
+        .withNativeFunction("vzMidiLearn", [this](Args a, Done done) { handleVzMidiLearn(a); done({}); })
+        .withNativeFunction("vzClearBinding", [this](Args a, Done done) { handleVzClearBinding(a); done({}); })
+        .withNativeFunction("vzEnterFullscreen", [this](Args, Done done) { handleVzEnterFullscreen(); done({}); })
+        .withNativeFunction("vzExitFullscreen", [this](Args, Done done) { handleVzExitFullscreen(); done({}); });
+    return options;
+}
+
+juce::var GHSFXCompanionEditor::handleVzGetParams()
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty("intensity", (double) ghsProcessor.getVisualIntensityParameter()->get());
+    o->setProperty("palette", ghsProcessor.getVisualPaletteParameter()->getIndex());
+    o->setProperty("scene", ghsProcessor.getVisualSceneParameter()->getIndex());
+
+    juce::Array<juce::var> paletteNames, sceneNames;
+    for (auto& s : ghsProcessor.getVisualPaletteParameter()->choices) paletteNames.add(s);
+    for (auto& s : ghsProcessor.getVisualSceneParameter()->choices) sceneNames.add(s);
+    o->setProperty("paletteNames", paletteNames);
+    o->setProperty("sceneNames", sceneNames);
+    return juce::var(o);
+}
+
+void GHSFXCompanionEditor::handleVzSetParam(const juce::Array<juce::var>& args)
+{
+    if (args.size() < 2) return;
+    const auto name = args[0].toString();
+    if (name == "intensity") *ghsProcessor.getVisualIntensityParameter() = (float) (double) args[1];
+    else if (name == "palette") *ghsProcessor.getVisualPaletteParameter() = (int) args[1];
+    else if (name == "scene") *ghsProcessor.getVisualSceneParameter() = (int) args[1];
+}
+
+void GHSFXCompanionEditor::handleVzMidiLearn(const juce::Array<juce::var>& args)
+{
+    ghsProcessor.getVisuals().armMidiLearn(args.size() > 0 ? (int) args[0] : -1);
+}
+
+void GHSFXCompanionEditor::handleVzClearBinding(const juce::Array<juce::var>& args)
+{
+    if (args.size() > 0)
+        ghsProcessor.getVisuals().clearBinding((int) args[0]);
+}
+
+void GHSFXCompanionEditor::handleVzEnterFullscreen()
+{
+    if (visualsFullscreen || webView == nullptr) return;
+    visualsFullscreen = true;
+
+    visualsWindow = std::make_unique<VisualsWindow>([this] { handleVzExitFullscreen(); });
+    removeChildComponent(webView.get());
+    visualsWindow->setContentNonOwned(webView.get(), false);
+    visualsWindow->setUsingNativeTitleBar(false);
+    visualsWindow->setResizable(false, false);
+
+    // Prefer a non-primary display (the projector/second-monitor use case).
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* primary = displays.getPrimaryDisplay();
+    const auto* target = primary;
+    for (auto& d : displays.displays)
+    {
+        if (&d != primary) { target = &d; break; }
+    }
+
+    if (target != nullptr)
+        visualsWindow->setBounds(target->totalArea);
+    visualsWindow->setVisible(true);
+    visualsWindow->setFullScreen(true);
+}
+
+void GHSFXCompanionEditor::handleVzExitFullscreen()
+{
+    if (!visualsFullscreen) return;
+    visualsFullscreen = false;
+
+    if (visualsWindow != nullptr)
+        visualsWindow->clearContentComponent(); // non-owned - webView survives
+    visualsWindow.reset();
+
+    addAndMakeVisible(*webView);
+    resized();
+}
+
+// ============================== Console 1 ====================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addConsole1Functions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+    auto arg = [](Args a, int i, juce::var fallback) { return i < a.size() ? a[i] : fallback; };
+    auto& c1 = ghsProcessor.getConsole1();
+
+    // Everything the engine can answer by itself goes through one dispatcher
+    // (Console1::Engine::invoke), shared with the headless UI test server.
+    for (const auto& fnName : Console1::Engine::bridgeFunctionNames())
+        options = options.withNativeFunction(fnName, [&c1, fnName](Args a, Done done) { done(c1.invoke(fnName, a)); });
+
+    options = options
+        .withNativeFunction("c1RevealProfiles", [](Args, Done done)
+            {
+                auto folder = Console1::Engine::profilesFolder();
+                folder.createDirectory();
+                folder.revealToUser();
+                done({});
+            })
+        .withNativeFunction("c1OpenEditor", [this, arg](Args a, Done done)
+            {
+                handleOpenHostedEditor(juce::Array<juce::var> { arg(a, 0, 0) });
+                done({});
+            });
+    return options;
 }

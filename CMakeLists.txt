@@ -22,7 +22,7 @@ juce_add_plugin(GHSFXCompanion
     BUNDLE_ID "com.grandhealingstudio.ghsfxcompanion"
     PLUGIN_MANUFACTURER_CODE Ghst
     PLUGIN_CODE Ghs1
-    FORMATS VST3 AU
+    FORMATS VST3 AU Standalone
     # Without this, every rebuild only updates the copy inside build/ - Logic
     # never sees it and keeps running whatever was last copied to the system
     # plugin folders by hand.
@@ -56,6 +56,10 @@ target_sources(GHSFXCompanion PRIVATE
     Source/DrumChainVariants.cpp
     Source/ToneAnalyzer.cpp
     Source/ToneRecommendation.cpp
+    Source/RiffHouseEngine.cpp
+    Source/StudioEngine.cpp
+    Source/VisualsEngine.cpp
+    Source/Console1Engine.cpp
 )
 
 # plugin_database.json: the same categorized real-plugin database the
@@ -78,6 +82,18 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/index.html
         Resources/webui/style.css
         Resources/webui/app.js
+        Resources/webui/riffhouse.js
+        Resources/webui/riffhouse.css
+        Resources/webui/routine.js
+        Resources/webui/routine.css
+        Resources/webui/studio.js
+        Resources/webui/studio.css
+        Resources/webui/studio-lattice.js
+        Resources/webui/visuals.js
+        Resources/webui/visuals.css
+        Resources/webui/console1.js
+        Resources/webui/console1-automap.js
+        Resources/webui/console1.css
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC

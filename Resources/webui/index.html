@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GHS FX Companion</title>
 <link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="riffhouse.css" />
+<link rel="stylesheet" href="routine.css" />
+<link rel="stylesheet" href="studio.css" />
+<link rel="stylesheet" href="visuals.css" />
+<link rel="stylesheet" href="console1.css" />
 </head>
 <body>
 <div id="app">
@@ -15,6 +20,13 @@
       <span class="brand-name">GHS FX Companion</span>
     </div>
     <div class="topbar-actions">
+      <nav class="view-switch">
+        <button id="navStudio" class="view-switch-btn on">Studio</button>
+        <button id="navRack" class="view-switch-btn">Rack</button>
+        <button id="navRiffHouse" class="view-switch-btn">Riff House</button>
+        <button id="navVisuals" class="view-switch-btn">Visuals</button>
+        <button id="navConsole1" class="view-switch-btn">Console 1</button>
+      </nav>
       <button id="recordBtn" class="btn btn-record">
         <span class="rec-dot"></span>
         <span id="recordBtnLabel">Record &amp; Suggest</span>
@@ -25,6 +37,11 @@
 
   <div id="toasts" class="toasts"></div>
 
+  <div id="view-studio" class="view on">
+    <div id="stRoot"></div>
+  </div>
+
+  <div id="view-rack" class="view">
   <main class="layout">
 
     <section class="panel browser">
@@ -52,10 +69,31 @@
     </section>
 
   </main>
+  </div>
+
+  <div id="view-riffhouse" class="view">
+    <div id="rhRoot"></div>
+  </div>
+
+  <div id="view-visuals" class="view">
+    <div id="vzRoot"></div>
+  </div>
+
+  <div id="view-console1" class="view">
+    <div id="c1Root"></div>
+  </div>
+
 </div>
 
 <div id="modalRoot"></div>
 
 <script src="app.js"></script>
+<script src="riffhouse.js"></script>
+<script src="routine.js"></script>
+<script src="studio-lattice.js"></script>
+<script src="studio.js"></script>
+<script src="visuals.js"></script>
+<script src="console1-automap.js"></script>
+<script src="console1.js"></script>
 </body>
 </html>

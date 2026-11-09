@@ -34,7 +34,7 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override; // emits "toneCaptureTick" while recording
+    void timerCallback() override; // 30 Hz: "rhLive" always, "toneCaptureTick" while recording
 
     std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url);
 
@@ -55,6 +55,13 @@ private:
     void handleStartToneCapture();
     void handleStopToneCaptureAndAnalyze(juce::WebBrowserComponent::NativeFunctionCompletion completion);
     void handleOpenHostedEditor(const juce::Array<juce::var>& args);
+
+    juce::var handleVzGetParams();
+    void handleVzSetParam(const juce::Array<juce::var>& args);
+    void handleVzMidiLearn(const juce::Array<juce::var>& args);
+    void handleVzClearBinding(const juce::Array<juce::var>& args);
+    void handleVzEnterFullscreen();
+    void handleVzExitFullscreen();
 
     const juce::PluginDescription* findKnownPluginByIdentifier(const juce::String& identifier);
     void emitToast(const juce::String& text, const juce::String& tone = "info");
@@ -88,17 +95,45 @@ private:
         std::function<void()> closeCallback;
     };
 
+    /** Fullscreen pop-out for the Visuals tab: reparents the single existing
+        webView (never owns it - setContentNonOwned) rather than running a
+        second WebBrowserComponent. No title bar/close button by design (true
+        fullscreen for a projector) - the only way out is an on-canvas button
+        calling vzExitFullscreen. */
+    struct VisualsWindow : juce::DocumentWindow
+    {
+        explicit VisualsWindow(std::function<void()> onClose)
+            : juce::DocumentWindow("Visuals", juce::Colours::black, 0),
+              closeCallback(std::move(onClose))
+        {
+        }
+
+        void closeButtonPressed() override { closeCallback(); }
+
+        std::function<void()> closeCallback;
+    };
+
     // Built in the constructor body (not as a default member initialiser) since
     // its Options need lambdas capturing `this`, which isn't valid yet in an
     // in-class initialiser.
     std::unique_ptr<SinglePageBrowser> webView;
 
     std::unique_ptr<HostedEditorWindow> hostedEditorWindow;
+    std::unique_ptr<VisualsWindow> visualsWindow;
+    bool visualsFullscreen = false;
 
     /** Refreshed on construction and whenever the frontend asks for a rescan. */
     juce::Array<juce::PluginDescription> allScannedPlugins;
 
     std::unique_ptr<juce::FileChooser> recipeFileChooser;
+    std::unique_ptr<juce::FileChooser> riffFileChooser;
+    std::unique_ptr<juce::FileChooser> studioFileChooser;
+    int toneTickDivider = 0;
+
+    juce::WebBrowserComponent::Options& addRiffHouseFunctions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addStudioFunctions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addVisualsFunctions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addConsole1Functions(juce::WebBrowserComponent::Options& options);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)
 };
