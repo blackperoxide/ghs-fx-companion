@@ -4,6 +4,13 @@ A JUCE-based AU/VST3 plugin that hosts your other real plugins inside itself and
 runs actual audio through them — the same category as Kilohearts Snap Heap,
 Waves StudioRack, or Safari Audio's Meaw:Chain.
 
+## Branch `ghs-studio-full`
+
+Everything in one place: plugin host, Riff House practice + routine, Studio launchpad,
+Console 1 control, and the DigiTech TRIO tools (`docs/TRIO.md`). Mac setup in one command:
+`tools/riffhouse_mac_setup.sh`.
+
+
 ## Where this is right now (Milestone 1)
 
 This proves the *hosting mechanism* only: pick an installed VST3/AU plugin

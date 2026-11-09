@@ -1,5 +1,13 @@
 # Handoff: GHS FX Companion
 
+## Combined branch: `ghs-studio-full` (2026-11-09)
+Shawn asked for Riff House and GHS FX Companion to be one full branch. `ghs-studio-full` =
+`console1-controller` (which already contained riffhouse -> riffhouse-routine -> studio-launchpad,
+linear history) + TRIO work. Work here from now on; the older branches are kept, not deleted.
+New in this branch: `docs/TRIO.md`, `tools/trio_capture.py` (+ `tools/test_trio_capture.py`),
+`tools/trio_firmware.py`, `tools/rea_mac_install.sh` + `tools/rea/` (REA 6.5.0 pinned).
+Trio rule: never build or flash a modified TRIO MCU image; DSP experiments only, stock DSP first.
+
 ## Newest work: Console 1 controller (branch `console1-controller`, off `studio-launchpad`)
 Read `docs/CONSOLE1.md`. Console 1 Mk I as hands-on knobs for hosted plugins: on-screen map, Learn, auto-map
 suggestions, per-plugin profiles, ring/LED feedback, simulator. Built while Shawn was away from his hardware:

@@ -17,8 +17,8 @@ fail() { printf '  FAIL  %s\n' "$1"; FAILS=$((FAILS+1)); }
 note() { printf '  note  %s\n' "$1"; }
 
 if [ "${1:-}" != "--verify" ]; then
-  step "1/3 Switch to the riffhouse-routine branch"
-  git fetch origin && git checkout riffhouse-routine && git pull --ff-only || { echo "Branch step failed; stopping."; exit 1; }
+  step "1/3 Switch to the combined ghs-studio-full branch"
+  git fetch origin && git checkout ghs-studio-full && git pull --ff-only || { echo "Branch step failed; stopping."; exit 1; }
 
   step "2/3 Rebuild (first run after the update can take several minutes)"
   ./rebuild.sh || note "rebuild.sh reported a problem above (a failed auval check is separate from the build itself)"
@@ -26,7 +26,7 @@ if [ "${1:-}" != "--verify" ]; then
   step "3/3 Python tools for importing your songs (one time, ~2-3 GB download)"
   if [ ! -x "$VENV/bin/python" ]; then python3 -m venv "$VENV" || echo "could not create venv"; fi
   "$VENV/bin/python" -m pip install --quiet --upgrade pip
-  "$VENV/bin/python" -m pip install "demucs>=4.0.1" "basic-pitch>=0.4.0" torch "librosa>=0.8.0" soundfile numpy \
+  "$VENV/bin/python" -m pip install "demucs>=4.0.1" "basic-pitch>=0.4.0" torch "librosa>=0.8.0" soundfile numpy pretty_midi \
     || note "pip install had errors above; copy them back to Computer"
 fi
 
@@ -35,7 +35,7 @@ APP="$(find build -maxdepth 4 -name 'GHS FX Companion.app' 2>/dev/null | head -1
 AU="$(find build -maxdepth 4 -name 'GHS FX Companion.component' 2>/dev/null | head -1)"
 VST="$(find build -maxdepth 4 -name 'GHS FX Companion.vst3' 2>/dev/null | head -1)"
 
-[ "$(git branch --show-current)" = "riffhouse-routine" ] && pass "on branch riffhouse-routine" || fail "not on riffhouse-routine (run without --verify)"
+[ "$(git branch --show-current)" = "ghs-studio-full" ] && pass "on branch ghs-studio-full" || fail "not on ghs-studio-full (run without --verify)"
 [ -f Resources/webui/routine.js ] && pass "Today tab source present" || fail "routine.js missing"
 
 if [ -n "$APP" ]; then
@@ -52,6 +52,10 @@ mkdir -p "$HOME/Music/GHS/RiffHouse/Journal" && touch "$HOME/Music/GHS/RiffHouse
 if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import demucs, basic_pitch, librosa, soundfile, torch" 2>/dev/null; then
   pass "song importer dependencies load"
 else fail "importer dependencies missing or broken (re-run without --verify and read the pip output)"; fi
+
+if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" tools/test_trio_capture.py >/tmp/trio_capture_test.log 2>&1; then
+  pass "Trio Capture self-test (synthetic 100 BPM part)"
+else fail "Trio Capture self-test failed: see /tmp/trio_capture_test.log"; fi
 
 N=$(find "$HOME/Music/GHS/RiffHouse/SongImports" -maxdepth 2 -name song.json 2>/dev/null | wc -l | tr -d ' ')
 [ "$N" -gt 0 ] && pass "$N song(s) imported" || note "no songs imported yet: tools/riffhouse_batch.sh <folder-of-your-songs>"
