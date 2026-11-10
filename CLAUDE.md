@@ -32,6 +32,14 @@ NOT verified (do this first, on macOS):
 5. The window is opened inside Logic as a plugin: confirm file picker and "open in default app" behave there;
    the Standalone target is the intended home for the launchpad.
 
+## Side branch: `riffhouse-latency-suggest` (2026-11-10, off `studio-launchpad`)
+Riff House Play tab: the Latency slider is now remembered, and after 8+ steady hits a quiet button offers a
+measured value ("About 40ms late. Use -40ms"). Nothing changes without a click. Logic is in
+`Resources/webui/rh-timing.js`; `node tools/test_rh_timing.js` passes (13).
+Verified: unit tests, and headless Chrome with a mock bridge (suggest, apply, persists across reload).
+NOT verified: the macOS build (new BinaryData name `rhtiming_js`), and whether localStorage persists
+inside the real JUCE webview. If it does not, the slider simply starts at 0 as before.
+
 ## Next milestones (in order)
 1. Fix whatever step 1-5 above reveals.
 2. Local mix analysis from stems (reuse `ToneAnalyzer`): loudness, spectral balance, stereo width, masking. Numbers only.

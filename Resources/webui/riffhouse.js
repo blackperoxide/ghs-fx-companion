@@ -47,7 +47,21 @@
     waitingForNote: null,
     ninja: null,
     fx: { particles: [], missFlash: 0, comboMilestone: 0 },
+    timing: window.RHTiming ? window.RHTiming.createTracker() : null,
   };
+
+  /* The Latency slider is remembered between sessions. Storage can be missing
+     or blocked inside a plugin webview, so every access is guarded. */
+  const LATENCY_KEY = "rh.latencyMs";
+  function loadSavedLatency() {
+    try {
+      const v = parseFloat(window.localStorage.getItem(LATENCY_KEY));
+      return isFinite(v) ? clamp(v, -120, 120) : 0;
+    } catch (e) { return 0; }
+  }
+  function saveLatency(ms) {
+    try { window.localStorage.setItem(LATENCY_KEY, String(ms)); } catch (e) { /* not available */ }
+  }
 
   const COMBO_MILESTONES = [10, 20, 30, 50, 75, 100, 150, 200];
 
@@ -116,6 +130,7 @@
           <button id="rhLoopToggle" class="btn btn-ghost small">Loop: off</button>
           <label>Rate <input type="range" id="rhRate" min="0.4" max="1.1" step="0.05" value="1" /><span id="rhRateLabel">1.00x</span></label>
           <label>Latency <input type="range" id="rhLatency" min="-120" max="120" step="5" value="0" /><span id="rhLatencyLabel">0ms</span></label>
+          <button id="rhLatencySuggest" class="btn btn-ghost small" hidden></button>
           <label><input type="checkbox" id="rhWaitMode" /> Wait mode</label>
           <label><input type="checkbox" id="rhMemoryMode" /> Memory mode</label>
           <label><input type="checkbox" id="rhDynDiff" /> Dynamic difficulty</label>
@@ -362,6 +377,7 @@
       }
       if (!judged && Math.abs(dt) <= HIT_GOOD) {
         if (noteMatches(midi)) {
+          noteTiming(dt);
           const perfect = judgeHit(i, Math.abs(dt));
           spawnHitParticles(x, hitY, perfect);
         }
@@ -528,6 +544,35 @@
     return false;
   }
 
+  /* Feeds the timing helper and shows a quiet "use this latency" button once
+     the pattern is steady. Nothing changes until that button is clicked. */
+  function noteTiming(dt) {
+    if (!RH.timing || !window.RHTiming) return;
+    if (RH.settings.waitMode || RH.settings.rate !== 1) return; // paused or slowed playback is not real timing
+    if (window.RHTiming.addHit(RH.timing, dt, HIT_GOOD)) refreshLatencySuggestion();
+  }
+
+  function refreshLatencySuggestion() {
+    const btn = document.getElementById("rhLatencySuggest");
+    if (!btn || !RH.timing || !window.RHTiming) return;
+    const s = window.RHTiming.suggest(RH.timing, RH.settings.latencyMs);
+    if (!s) { btn.hidden = true; return; }
+    btn.dataset.latency = String(s.newLatencyMs);
+    btn.textContent = "About " + s.offsetMs + "ms " + s.direction + ". Use " + s.newLatencyMs + "ms";
+    btn.hidden = false;
+  }
+
+  function setLatency(ms) {
+    RH.settings.latencyMs = ms;
+    const slider = document.getElementById("rhLatency");
+    const label = document.getElementById("rhLatencyLabel");
+    if (slider) slider.value = String(ms);
+    if (label) label.textContent = ms + "ms";
+    saveLatency(ms);
+    if (RH.timing && window.RHTiming) window.RHTiming.reset(RH.timing); // old hits were measured at the old setting
+    refreshLatencySuggestion();
+  }
+
   function maybeWaitForNote(midi) {
     if (RH.waitingForNote != null) return;
     RH.waitingForNote = midi;
@@ -650,10 +695,11 @@
     });
 
     const latency = document.getElementById("rhLatency");
-    const latencyLabel = document.getElementById("rhLatencyLabel");
-    latency.addEventListener("input", () => {
-      RH.settings.latencyMs = parseFloat(latency.value);
-      latencyLabel.textContent = RH.settings.latencyMs + "ms";
+    latency.addEventListener("input", () => setLatency(parseFloat(latency.value)));
+    setLatency(loadSavedLatency());
+    document.getElementById("rhLatencySuggest").addEventListener("click", (e) => {
+      const v = parseFloat(e.currentTarget.dataset.latency);
+      if (isFinite(v)) setLatency(v);
     });
 
     document.getElementById("rhWaitMode").addEventListener("change", (e) => {

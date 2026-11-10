@@ -281,3 +281,6 @@
 
 .rh-empty { padding: 24px; text-align: center; color: var(--text-faint); font-size: 12px; line-height: 1.6; }
 .rh-section-title { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); font-weight: 600; margin: 0; }
+
+/* Latency suggestion: only visible when there is something to suggest. */
+#rhLatencySuggest[hidden] { display: none; }

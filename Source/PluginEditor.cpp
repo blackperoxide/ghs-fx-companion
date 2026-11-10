@@ -176,6 +176,8 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::app_js, BinaryData::app_jsSize, "text/javascript");
     if (path == "riffhouse.js")
         return makeResource(BinaryData::riffhouse_js, BinaryData::riffhouse_jsSize, "text/javascript");
+    if (path == "rh-timing.js")
+        return makeResource(BinaryData::rhtiming_js, BinaryData::rhtiming_jsSize, "text/javascript");
     if (path == "riffhouse.css")
         return makeResource(BinaryData::riffhouse_css, BinaryData::riffhouse_cssSize, "text/css");
     if (path == "routine.js")
