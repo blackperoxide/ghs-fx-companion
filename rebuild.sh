@@ -14,7 +14,7 @@ git pull
 echo "==> cmake configure"
 cmake -S . -B build
 
-echo "==> cmake build (AU + VST3 + scanner)"
+echo "==> cmake build (Companion AU + VST3 + scanner, Drum Gate AU + VST3)"
 cmake --build build
 
 echo "==> clearing AU cache"
@@ -23,3 +23,6 @@ rm -rf ~/Library/Caches/AudioUnitCache
 
 echo "==> auval"
 auval -v aumf Ghs1 Ghst
+
+echo "==> auval (GHS Drum Gate)"
+auval -v aumf Ghdg Ghst
