@@ -141,7 +141,7 @@ void GateKnob::resized()
 
 GateDisplay::GateDisplay(GHSDrumGateProcessor& p) : proc(p)
 {
-    history.assign(2048, { 0.0f, -120.0f, 1.0f, false });
+    history.assign(2048, { 0.0f, -120.0f, 1.0f, false, false });
     setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
     startTimerHz(60);
 }
@@ -246,6 +246,11 @@ void GateDisplay::paint(juce::Graphics& g)
             g.setColour(open);
             g.fillRect(x - 1.0f, a.getY(), 2.0f, 6.0f);
         }
+        if (f.rejected)
+        {
+            g.setColour(reject);
+            g.fillRect(x - 1.0f, a.getY(), 2.0f, 6.0f);
+        }
 
         const float yKey = dbToY(f.keyDb, a);
         if (! keyStarted) { keyPath.startNewSubPath(x, yKey); keyStarted = true; }
@@ -280,7 +285,7 @@ void GateDisplay::paint(juce::Graphics& g)
 
     // legend
     g.setFont(juce::FontOptions(10.5f));
-    auto legend = juce::Rectangle<float>(a.getX() + 6.0f, a.getY() + 2.0f, 260.0f, 13.0f);
+    auto legend = juce::Rectangle<float>(a.getX() + 6.0f, a.getY() + 8.0f, 430.0f, 13.0f);
     g.setColour(juce::Colour(0xff0c0e11).withAlpha(0.85f));
     g.fillRoundedRectangle(legend.expanded(4.0f, 2.0f), 3.0f);
     auto swatch = [&](juce::Colour c, const juce::String& t)
@@ -292,6 +297,8 @@ void GateDisplay::paint(juce::Graphics& g)
     swatch(accent, duck ? "Ducked out" : "Passed");
     swatch(closed, "Removed");
     swatch(key, "Key level");
+    swatch(open, "Hit");
+    swatch(reject, "Rejected");
 
     // gain meter
     const auto m = meterArea();
@@ -349,14 +356,22 @@ GHSDrumGateEditor::GHSDrumGateEditor(GHSDrumGateProcessor& p)
       hysteresis(p.apvts, GateParamIDs::hysteresis, "HYSTERESIS"),
       sensitivity(p.apvts, GateParamIDs::sens, "TRANSIENT"),
       retrigger(p.apvts, GateParamIDs::retrigger, "RETRIGGER"),
+      matchTol(p.apvts, GateParamIDs::matchTol, "TOLERANCE"),
       hpf(p.apvts, GateParamIDs::keyHpf, "KEY HPF"),
       lpf(p.apvts, GateParamIDs::keyLpf, "KEY LPF"),
       lookahead(p.apvts, GateParamIDs::lookahead, "LOOKAHEAD"),
+      midiInNote(p.apvts, GateParamIDs::midiInNote, "TRIG NOTE"),
       attack(p.apvts, GateParamIDs::attack, "ATTACK"),
       hold(p.apvts, GateParamIDs::hold, "HOLD"),
       release(p.apvts, GateParamIDs::release, "RELEASE"),
-      range(p.apvts, GateParamIDs::range, "RANGE"),
+      adaptive(p.apvts, GateParamIDs::adaptive, "ADAPTIVE"),
       punch(p.apvts, GateParamIDs::punch, "PUNCH"),
+      range(p.apvts, GateParamIDs::range, "RANGE / LOW"),
+      rangeHigh(p.apvts, GateParamIDs::rangeHigh, "HIGH RANGE"),
+      crossover(p.apvts, GateParamIDs::crossover, "CROSSOVER"),
+      level(p.apvts, GateParamIDs::level, "LEVELLER"),
+      levelTarget(p.apvts, GateParamIDs::levelTarget, "TARGET"),
+      clip(p.apvts, GateParamIDs::clip, "HIT CLIP"),
       mix(p.apvts, GateParamIDs::mix, "MIX"),
       output(p.apvts, GateParamIDs::output, "OUTPUT"),
       midiNote(p.apvts, GateParamIDs::midiNote, "NOTE"),
@@ -366,16 +381,19 @@ GHSDrumGateEditor::GHSDrumGateEditor(GHSDrumGateProcessor& p)
 
     addAndMakeVisible(display);
 
-    for (auto* k : { &hpf, &lpf, &lookahead })
+    for (auto* k : { &hpf, &lpf, &lookahead, &midiInNote, &matchTol })
         k->slider.setColour(juce::Slider::rotarySliderFillColourId, key);
+    for (auto* k : { &level, &levelTarget, &clip })
+        k->slider.setColour(juce::Slider::rotarySliderFillColourId, dynamics);
     for (auto* k : { &midiNote, &midiVel })
         k->slider.setColour(juce::Slider::rotarySliderFillColourId, open);
 
     midiNote.slider.textFromValueFunction = noteName;
     midiNote.slider.updateText();
 
-    for (auto* k : { &threshold, &hysteresis, &sensitivity, &retrigger, &hpf, &lpf, &lookahead,
-                     &attack, &hold, &release, &range, &punch, &mix, &output, &midiNote, &midiVel })
+    for (auto* k : { &threshold, &hysteresis, &sensitivity, &retrigger, &matchTol, &hpf, &lpf, &lookahead, &midiInNote,
+                     &attack, &hold, &release, &adaptive, &punch, &range, &rangeHigh, &crossover,
+                     &level, &levelTarget, &clip, &mix, &output, &midiNote, &midiVel })
         addAndMakeVisible(*k);
 
     // presets
@@ -396,13 +414,36 @@ GHSDrumGateEditor::GHSDrumGateEditor(GHSDrumGateProcessor& p)
     keyListenAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, GateParamIDs::keyListen, keyListenButton);
     midiAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, GateParamIDs::midiOn, midiButton);
 
+    splitButton.setColour(juce::ToggleButton::tickColourId, accent);
+    matchButton.setColour(juce::ToggleButton::tickColourId, key);
+    learnHitsButton.setColour(juce::ToggleButton::tickColourId, open);
+    learnSpillButton.setColour(juce::ToggleButton::tickColourId, reject);
+    for (auto* b : { &splitButton, &matchButton, &learnHitsButton, &learnSpillButton })
+        addAndMakeVisible(*b);
+    splitAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, GateParamIDs::bandSplit, splitButton);
+    matchAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, GateParamIDs::hitMatch, matchButton);
+
+    learnHitsButton.onClick = [this] { setLearnMode(learnHitsButton.getToggleState() ? 1 : 0); };
+    learnSpillButton.onClick = [this] { setLearnMode(learnSpillButton.getToggleState() ? 2 : 0); };
+    learnHitsButton.setTooltip("Play (or loop) a section with only the drum you want. Every hit it hears becomes the reference sound.");
+    learnSpillButton.setTooltip("Play a section with only the bleed you want gone (e.g. kick spill on the snare mic).");
+    clearButton.setColour(juce::TextButton::buttonColourId, panelEdge);
+    clearButton.setColour(juce::TextButton::textColourOffId, text);
+    clearButton.onClick = [this] { setLearnMode(0); proc.clearRequest = 3; };
+    addAndMakeVisible(clearButton);
+
+    matchStatus.setFont(juce::FontOptions(11.5f));
+    matchStatus.setJustificationType(juce::Justification::centredLeft);
+    matchStatus.setColour(juce::Label::textColourId, dimText);
+    addAndMakeVisible(matchStatus);
+
     scStatus.setFont(juce::FontOptions(11.0f));
     scStatus.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(scStatus);
 
     setResizable(true, true);
-    setResizeLimits(900, 600, 1600, 1000);
-    setSize(980, 640);
+    setResizeLimits(1000, 700, 1700, 1100);
+    setSize(1100, 780);
     startTimerHz(10);
 }
 
@@ -410,6 +451,16 @@ GHSDrumGateEditor::~GHSDrumGateEditor()
 {
     stopTimer();
     setLookAndFeel(nullptr);
+}
+
+void GHSDrumGateEditor::setLearnMode(int mode)
+{
+    // Starting a learn pass starts that profile fresh
+    if (mode == 1) proc.clearRequest = proc.clearRequest.load() | 1;
+    if (mode == 2) proc.clearRequest = proc.clearRequest.load() | 2;
+    proc.learnMode = mode;
+    learnHitsButton.setToggleState(mode == 1, juce::dontSendNotification);
+    learnSpillButton.setToggleState(mode == 2, juce::dontSendNotification);
 }
 
 void GHSDrumGateEditor::addChoice(juce::ComboBox& box, std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& att,
@@ -423,7 +474,35 @@ void GHSDrumGateEditor::addChoice(juce::ComboBox& box, std::unique_ptr<juce::Aud
 
 void GHSDrumGateEditor::timerCallback()
 {
-    const bool wantSc = proc.apvts.getRawParameterValue(GateParamIDs::keySource)->load() > 0.5f;
+    const int source = juce::roundToInt(proc.apvts.getRawParameterValue(GateParamIDs::keySource)->load());
+    const bool wantSc = source == 1;
+    midiInNote.setAlpha(source == 2 ? 1.0f : 0.4f);
+
+    const bool split = splitButton.getToggleState();
+    rangeHigh.setAlpha(split ? 1.0f : 0.4f);
+    crossover.setAlpha(split ? 1.0f : 0.4f);
+
+    // Hit Match status
+    {
+        const int hits = proc.learnedHitCount.load(), spill = proc.learnedSpillCount.load();
+        const int mode = proc.learnMode.load();
+        juce::String t;
+        if (mode == 1)      t = "Learning hits... " + juce::String(hits) + " so far";
+        else if (mode == 2) t = "Learning spill... " + juce::String(spill) + " so far";
+        else if (hits == 0 && spill == 0) t = "Nothing learned yet";
+        else
+        {
+            t = "Hits: " + juce::String(hits) + "   Spill: " + juce::String(spill);
+            const float d = proc.lastMatchDistance.load();
+            if (d >= 0.0f) t << "   Last: " << juce::String(d, 1) << " dB " << (proc.lastHitRejected.load() ? "(rejected)" : "(kept)");
+        }
+        matchStatus.setText(t, juce::dontSendNotification);
+        matchStatus.setColour(juce::Label::textColourId, mode == 1 ? open : mode == 2 ? reject : dimText);
+        matchTol.setAlpha(matchButton.getToggleState() ? 1.0f : 0.4f);
+        if (source == 2 && matchButton.getToggleState())
+            matchStatus.setText("Not used with MIDI triggering", juce::dontSendNotification);
+    }
+
     const bool haveSc = proc.sidechainConnected.load();
     if (! wantSc)
         scStatus.setText({}, juce::dontSendNotification);
@@ -444,7 +523,9 @@ void GHSDrumGateEditor::timerCallback()
 
     // Punch only applies in Gate mode
     const bool duck = proc.apvts.getRawParameterValue(GateParamIDs::mode)->load() > 0.5f;
-    punch.setAlpha(duck ? 0.4f : 1.0f);
+    for (auto* k : { &punch, &level, &levelTarget, &clip })
+        k->setAlpha(duck ? 0.4f : 1.0f);
+    levelTarget.setAlpha(duck || proc.apvts.getRawParameterValue(GateParamIDs::level)->load() < 0.5f ? 0.4f : 1.0f);
 
     const bool midiOn = midiButton.getToggleState();
     midiNote.setAlpha(midiOn ? 1.0f : 0.4f);
@@ -477,8 +558,11 @@ void GHSDrumGateEditor::paint(juce::Graphics& g)
     g.drawText("DRUM GATE", header.removeFromLeft(130), juce::Justification::centredLeft);
 
     drawSection(g, detectSection, "DETECTION");
+    drawSection(g, matchSection, "HIT MATCH");
     drawSection(g, keySection, "KEY");
     drawSection(g, envSection, "ENVELOPE");
+    drawSection(g, bandSection, "BANDS");
+    drawSection(g, dynSection, "HIT DYNAMICS");
     drawSection(g, outSection, "OUTPUT  /  MIDI");
 }
 
@@ -487,62 +571,82 @@ void GHSDrumGateEditor::resized()
     auto r = getLocalBounds();
     auto header = r.removeFromTop(48).reduced(16, 10);
     header.removeFromLeft(190);
-    presetBox.setBounds(header.removeFromLeft(210));
-    header.removeFromLeft(12);
+    presetBox.setBounds(header.removeFromLeft(230));
     modeBox.setBounds(header.removeFromRight(100));
 
     r.reduce(16, 0);
     r.removeFromBottom(14);
 
-    const int knobRowH = 118;
-    const int sectionH = knobRowH + 30;
-    auto bottom = r.removeFromBottom(sectionH * 2 + 10);
+    const int gap = 10;
+    const int sectionH = 146;
+    auto rows = r.removeFromBottom(sectionH * 3 + gap * 2);
     display.setBounds(r.reduced(0, 4));
 
-    auto row1 = bottom.removeFromTop(sectionH);
-    bottom.removeFromTop(10);
-    auto row2 = bottom;
+    auto row1 = rows.removeFromTop(sectionH); rows.removeFromTop(gap);
+    auto row2 = rows.removeFromTop(sectionH); rows.removeFromTop(gap);
+    auto row3 = rows;
 
-    const int gap = 10;
-    detectSection = row1.removeFromLeft((row1.getWidth() - gap) * 4 / 7);
-    row1.removeFromLeft(gap);
-    keySection = row1;
-
-    envSection = row2.removeFromLeft((row2.getWidth() - gap) * 5 / 9);
-    row2.removeFromLeft(gap);
-    outSection = row2;
-
-    auto layoutKnobs = [](juce::Rectangle<int> area, std::initializer_list<GateKnob*> knobs)
+    // split a row into sections proportional to how many knob-widths each needs
+    auto split = [gap](juce::Rectangle<int> row, std::initializer_list<std::pair<juce::Rectangle<int>*, int>> parts)
     {
-        area = area.withTrimmedTop(26).reduced(6, 4);
+        int units = 0;
+        for (auto& p : parts) units += p.second;
+        const int avail = row.getWidth() - gap * (int(parts.size()) - 1);
+        int i = 0;
+        for (auto& p : parts)
+        {
+            const bool last = ++i == int(parts.size());
+            *p.first = last ? row : row.removeFromLeft(avail * p.second / units);
+            if (! last) row.removeFromLeft(gap);
+        }
+    };
+    split(row1, { { &detectSection, 4 }, { &matchSection, 3 }, { &keySection, 4 } });
+    split(row2, { { &envSection, 5 }, { &bandSection, 3 } });
+    split(row3, { { &dynSection, 3 }, { &outSection, 4 } });
+
+    auto knobArea = [](juce::Rectangle<int> s) { return s.withTrimmedTop(26).reduced(6, 4); };
+    auto layoutKnobs = [&](juce::Rectangle<int> area, std::initializer_list<GateKnob*> knobs)
+    {
         const int w = area.getWidth() / int(knobs.size());
         for (auto* k : knobs)
             k->setBounds(area.removeFromLeft(w).reduced(2, 0));
     };
-
-    // section header controls (right-aligned in each section's title bar)
     auto titleBar = [](juce::Rectangle<int> s) { return s.removeFromTop(26).reduced(8, 3); };
 
-    {
-        auto t = titleBar(detectSection);
-        detectBox.setBounds(t.removeFromRight(110));
-    }
+    { auto t = titleBar(detectSection); detectBox.setBounds(t.removeFromRight(110)); }
     {
         auto t = titleBar(keySection);
         keySourceBox.setBounds(t.removeFromRight(100));
         t.removeFromRight(6);
-        keyListenButton.setBounds(t.removeFromRight(100));
-        t.removeFromRight(6);
-        t.removeFromLeft(40);
+        keyListenButton.setBounds(t.removeFromRight(96));
+        t.removeFromLeft(36);
         scStatus.setBounds(t);
     }
-    {
-        auto t = titleBar(outSection);
-        midiButton.setBounds(t.removeFromRight(96));
-    }
+    { auto t = titleBar(matchSection); matchButton.setBounds(t.removeFromRight(80)); }
+    { auto t = titleBar(bandSection); splitButton.setBounds(t.removeFromRight(100)); }
+    { auto t = titleBar(outSection); midiButton.setBounds(t.removeFromRight(96)); }
 
-    layoutKnobs(detectSection, { &threshold, &hysteresis, &sensitivity, &retrigger });
-    layoutKnobs(keySection, { &hpf, &lpf, &lookahead });
-    layoutKnobs(envSection, { &attack, &hold, &release, &range, &punch });
-    layoutKnobs(outSection, { &mix, &output, &midiNote, &midiVel });
+    layoutKnobs(knobArea(detectSection), { &threshold, &hysteresis, &sensitivity, &retrigger });
+    layoutKnobs(knobArea(keySection), { &hpf, &lpf, &lookahead, &midiInNote });
+    layoutKnobs(knobArea(envSection), { &attack, &hold, &release, &adaptive, &punch });
+    layoutKnobs(knobArea(bandSection), { &range, &rangeHigh, &crossover });
+    layoutKnobs(knobArea(dynSection), { &level, &levelTarget, &clip });
+    layoutKnobs(knobArea(outSection), { &mix, &output, &midiNote, &midiVel });
+
+    // Hit Match: tolerance knob + learn buttons + status
+    {
+        auto a = knobArea(matchSection);
+        matchTol.setBounds(a.removeFromLeft(a.getWidth() / 3).reduced(2, 0));
+        a.removeFromLeft(8);
+        auto status = a.removeFromBottom(22);
+        matchStatus.setBounds(status);
+        a.removeFromTop(10);
+        const int bh = 26;
+        learnHitsButton.setBounds(a.removeFromTop(bh).reduced(0, 1));
+        a.removeFromTop(6);
+        auto rowB = a.removeFromTop(bh);
+        learnSpillButton.setBounds(rowB.removeFromLeft(rowB.getWidth() * 2 / 3).reduced(0, 1));
+        rowB.removeFromLeft(6);
+        clearButton.setBounds(rowB.reduced(0, 1));
+    }
 }

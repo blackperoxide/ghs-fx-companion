@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GateDSP.h"
@@ -7,8 +8,10 @@
 /**
  * GHS Drum Gate - a drum-focused gate/ducker with a filtered key, three
  * detection modes, lookahead, hold, hysteresis, a retrigger (double-hit)
- * guard, a punch accent, parallel mix, external sidechain, key listen,
- * and MIDI trigger output for drum replacement.
+ * guard, timbre-based Hit Match (learn hits / learn spill), two-band gating,
+ * adaptive decay, a per-hit leveller and clipper, a punch accent, parallel mix,
+ * external sidechain or MIDI triggering, key listen, and MIDI trigger output
+ * for drum replacement.
  */
 class GHSDrumGateProcessor : public juce::AudioProcessor
 {
@@ -50,6 +53,7 @@ public:
         float keyDb;       // detector level
         float minGain;     // lowest gain applied in this frame (linear)
         bool  hit;         // a gate opening happened in this frame
+        bool  rejected;    // Hit Match turned a candidate hit away in this frame
     };
 
     /** Editor-side: pulls any pending frames. Returns how many were copied. */
@@ -60,6 +64,16 @@ public:
     std::atomic<bool>  meterOpen { false };
     std::atomic<bool>  sidechainConnected { false };
 
+    // ---- Hit Match learning (message thread <-> audio thread) ----
+    /** 0 = off, 1 = learning hits, 2 = learning spill. Set by the editor's Learn buttons. */
+    std::atomic<int> learnMode { 0 };
+    /** Editor asks to forget a profile: bit 1 = hits, bit 2 = spill. Applied on the audio thread. */
+    std::atomic<int> clearRequest { 0 };
+    std::atomic<int> learnedHitCount { 0 };
+    std::atomic<int> learnedSpillCount { 0 };
+    std::atomic<float> lastMatchDistance { -1.0f };
+    std::atomic<bool> lastHitRejected { false };
+
     /** Samples per display frame - the editor uses it to label the time axis. */
     static constexpr int samplesPerFrame = 128;
     double getCurrentSampleRate() const { return currentSampleRate.load(); }
@@ -68,6 +82,15 @@ private:
     GHSGate::Settings readSettings() const;
 
     GHSGate::Engine engine;
+
+    // Learned profiles cross threads under this lock: the audio thread only
+    // ever *tries* it, so it can never block on the message thread.
+    juce::SpinLock profileLock;
+    GHSGate::Profile sharedHitProfile, sharedSpillProfile;
+    bool profilesPendingForEngine = false;
+    static juce::String profileToString(const GHSGate::Profile&);
+    static GHSGate::Profile profileFromString(const juce::String&);
+    std::array<GHSGate::MidiTrigger, 256> midiTriggers {};
     juce::AudioBuffer<float> keyBuffer;
     int reportedLatency = -1;
     int currentProgram = 0;
@@ -80,7 +103,7 @@ private:
     juce::AbstractFifo displayFifo { 8192 };
     std::vector<DisplayFrame> displayBuffer = std::vector<DisplayFrame>(8192);
     int frameCounter = 0;
-    DisplayFrame pending { 0.0f, -120.0f, 1.0f, false };
+    DisplayFrame pending { 0.0f, -120.0f, 1.0f, false, false };
 
     // cached parameter pointers (real-time safe reads)
     std::atomic<float>* pThreshold = nullptr;
@@ -104,6 +127,16 @@ private:
     std::atomic<float>* pMidiOn = nullptr;
     std::atomic<float>* pMidiNote = nullptr;
     std::atomic<float>* pMidiVelSens = nullptr;
+    std::atomic<float>* pMidiInNote = nullptr;
+    std::atomic<float>* pClip = nullptr;
+    std::atomic<float>* pLevelTarget = nullptr;
+    std::atomic<float>* pLevel = nullptr;
+    std::atomic<float>* pMatchTol = nullptr;
+    std::atomic<float>* pHitMatch = nullptr;
+    std::atomic<float>* pCrossover = nullptr;
+    std::atomic<float>* pRangeHigh = nullptr;
+    std::atomic<float>* pBandSplit = nullptr;
+    std::atomic<float>* pAdaptive = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSDrumGateProcessor)
 };
@@ -131,4 +164,14 @@ namespace GateParamIDs
     inline constexpr const char* midiOn     = "midiOn";
     inline constexpr const char* midiNote   = "midiNote";
     inline constexpr const char* midiVelSens = "midiVelSens";
+    inline constexpr const char* adaptive   = "adaptiveDecay";
+    inline constexpr const char* bandSplit  = "bandSplit";
+    inline constexpr const char* rangeHigh  = "rangeHigh";
+    inline constexpr const char* crossover  = "crossover";
+    inline constexpr const char* hitMatch   = "hitMatch";
+    inline constexpr const char* matchTol   = "matchTolerance";
+    inline constexpr const char* level      = "level";
+    inline constexpr const char* levelTarget = "levelTarget";
+    inline constexpr const char* clip       = "clip";
+    inline constexpr const char* midiInNote = "midiInNote";
 }

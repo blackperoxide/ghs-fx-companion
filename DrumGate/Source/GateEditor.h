@@ -15,6 +15,8 @@ namespace GateColours
     const juce::Colour key        { 0xff38c8e8 }; // detector / key
     const juce::Colour closed     { 0xff3a3f48 }; // audio the gate removed
     const juce::Colour open       { 0xff8ee06a }; // gate-open indicator
+    const juce::Colour reject     { 0xffe8505b }; // hit turned away by Hit Match
+    const juce::Colour dynamics   { 0xffc58cff }; // leveller / clipper
 }
 
 class GateLookAndFeel : public juce::LookAndFeel_V4
@@ -96,17 +98,24 @@ private:
 
     juce::ComboBox presetBox, modeBox, detectBox, keySourceBox;
     juce::ToggleButton keyListenButton { "Key Listen" }, midiButton { "MIDI Out" };
-    juce::Label scStatus;
+    juce::ToggleButton splitButton { "Two-Band" }, matchButton { "Match" };
+    juce::ToggleButton learnHitsButton { "Learn Hits" }, learnSpillButton { "Learn Spill" };
+    juce::TextButton clearButton { "Clear" };
+    juce::Label scStatus, matchStatus;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAtt, detectAtt, keySourceAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> keyListenAtt, midiAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> keyListenAtt, midiAtt, splitAtt, matchAtt;
+    void setLearnMode(int mode);
 
     GateKnob threshold, hysteresis, sensitivity, retrigger;
-    GateKnob hpf, lpf, lookahead;
-    GateKnob attack, hold, release, range, punch;
+    GateKnob matchTol;
+    GateKnob hpf, lpf, lookahead, midiInNote;
+    GateKnob attack, hold, release, adaptive, punch;
+    GateKnob range, rangeHigh, crossover;
+    GateKnob level, levelTarget, clip;
     GateKnob mix, output, midiNote, midiVel;
 
-    juce::Rectangle<int> detectSection, keySection, envSection, outSection;
+    juce::Rectangle<int> detectSection, matchSection, keySection, envSection, bandSection, dynSection, outSection;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSDrumGateEditor)
 };
