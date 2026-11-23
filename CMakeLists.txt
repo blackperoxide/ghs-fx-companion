@@ -14,6 +14,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JUCE)
 
+# GHS Drum Gate: a separate AU/VST3 drum gate plugin (see DrumGate/README.md).
+add_subdirectory(DrumGate)
+
 # Milestone 1: host a single third-party VST3/AU plugin and pass real audio
 # through it. No chain, no AI matching yet - just prove the hosting mechanism
 # works before building anything on top of it.
