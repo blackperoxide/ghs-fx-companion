@@ -77,6 +77,38 @@ private:
     bool dragging = false;
 };
 
+/**
+ * The ALIGN tab: this track's role in the kit alignment, the Analyse / Reset
+ * controls shared by the group, and a table of every instance in the group
+ * with its time offset, polarity / phase and how much better it lines up.
+ */
+class AlignPanel : public juce::Component, private juce::Timer
+{
+public:
+    explicit AlignPanel(GHSDrumGateProcessor&);
+    ~AlignPanel() override;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void refresh();
+
+    GHSDrumGateProcessor& proc;
+    juce::TextEditor nameEditor;
+    juce::ToggleButton alignButton { "Align" }, refButton { "Reference" }, alignOnlyButton { "Align only (no gating)" };
+    juce::ComboBox groupBox, modeBox;
+    juce::TextButton analyseButton { "Analyse" }, resetButton { "Reset" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, refAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> groupAtt;
+
+    GHSAlign::Registry::GroupStatus status;
+    std::vector<GHSAlign::MemberReport> rows;
+    juce::Rectangle<int> leftArea, rightArea, tableArea, statusArea, helpArea;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AlignPanel)
+};
+
 class GHSDrumGateEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -116,6 +148,13 @@ private:
     GateKnob mix, output, midiNote, midiVel;
 
     juce::Rectangle<int> detectSection, matchSection, keySection, envSection, bandSection, dynSection, outSection;
+
+    // GATE / ALIGN tabs
+    juce::TextButton gateTab { "GATE" }, alignTab { "ALIGN" };
+    AlignPanel alignPanel;
+    bool showingAlign = false;
+    void showTab(bool align);
+    std::vector<juce::Component*> gateComponents();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSDrumGateEditor)
 };

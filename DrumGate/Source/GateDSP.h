@@ -156,6 +156,7 @@ struct Settings
     float matchToleranceDb = 4.0f;
     LearnMode learn     = LearnMode::Off;
     bool  triggerFromMidi = false; // gate opens on MIDI notes instead of audio detection
+    bool  gateBypass    = false;  // "Align Only": no gating or hit dynamics, audio just passes (still delayed for alignment)
     GateMode mode       = GateMode::Gate;
     float punchDb       = 0.0f;   // extra gain right at the opening, decays quickly
     float levelAmount   = 0.0f;   // 0..1: pull every hit's peak toward levelTargetDb
@@ -264,7 +265,7 @@ public:
         const int holdSamples = int(sr * s.holdMs / 1000.0);
         const int guardSamples = int(sr * s.retriggerMs / 1000.0);
         const int chans = std::min(numChannels, channels);
-        const bool gateMode = s.mode == GateMode::Gate;
+        const bool gateMode = s.mode == GateMode::Gate || s.gateBypass;
         int midiIndex = 0;
 
         for (int i = 0; i < numSamples; ++i)
@@ -311,7 +312,12 @@ public:
             // ---- state machine ----
             if (samplesSinceOpen < (1 << 30)) ++samplesSinceOpen;
 
-            if (s.triggerFromMidi)
+            if (s.gateBypass)
+            {
+                if (state == State::Open) closeGate(i, onTrigger);
+                state = State::Closed;
+            }
+            else if (s.triggerFromMidi)
             {
                 while (midiIndex < numMidi && midi[midiIndex].sampleOffset <= i)
                 {
@@ -383,7 +389,9 @@ public:
             }
 
             // ---- envelope ----
-            if (state == State::Open)
+            if (s.gateBypass)
+                openness = 1.0f;
+            else if (state == State::Open)
                 openness = std::min(1.0f, openness + attackStep);
             else
                 openness *= hitReleaseCoef;
@@ -396,7 +404,7 @@ public:
             {
                 gLow  = rangeLow  + (1.0f - rangeLow)  * openness;
                 gHigh = rangeHigh + (1.0f - rangeHigh) * openness;
-                if (punchGain > 1.0f)
+                if (punchGain > 1.0f && ! s.gateBypass)
                 {
                     const float p = 1.0f + (punchGain - 1.0f) * punchEnv * openness;
                     gLow *= p; gHigh *= p;
@@ -410,7 +418,7 @@ public:
             const float displayGain = std::max(gLow, gHigh);
             lastGainDb = gainToDb(displayGain);
 
-            const bool applyDynamics = gateMode && ! s.keyListen;
+            const bool applyDynamics = gateMode && ! s.keyListen && ! s.gateBypass;
             const float lvl = applyDynamics ? levelGain : 1.0f;
             const bool clip = applyDynamics && s.clipDb > 0.01f && clipCeiling > 0.0f;
 
@@ -430,7 +438,7 @@ public:
                 inAbs = std::max(inAbs, std::fabs(dry));
 
                 float gated;
-                if (s.bandSplit)
+                if (s.bandSplit && ! s.gateBypass)
                 {
                     float lo, hi;
                     crossovers[size_t(ch)].process(dry, lo, hi);

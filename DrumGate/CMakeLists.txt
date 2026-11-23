@@ -50,6 +50,8 @@ juce_add_plugin(GHSDrumGate
 target_sources(GHSDrumGate PRIVATE
     Source/GateProcessor.cpp
     Source/GateEditor.cpp
+    Source/AlignRegistry.cpp
+    Source/AlignPanel.cpp
 )
 
 target_compile_definitions(GHSDrumGate PUBLIC
@@ -74,3 +76,15 @@ add_executable(GHSDrumGateDSPTest Tests/GateDSPTest.cpp)
 target_include_directories(GHSDrumGateDSPTest PRIVATE Source)
 enable_testing()
 add_test(NAME GHSDrumGateDSP COMMAND GHSDrumGateDSPTest)
+
+add_executable(GHSDrumGateAlignTest Tests/AlignDSPTest.cpp)
+target_include_directories(GHSDrumGateAlignTest PRIVATE Source)
+add_test(NAME GHSDrumGateAlign COMMAND GHSDrumGateAlignTest)
+
+# End-to-end alignment test with real plugin instances (needs JUCE; no audio device or display).
+juce_add_console_app(GHSDrumGateAlignE2E PRODUCT_NAME "GHSDrumGateAlignE2E")
+target_sources(GHSDrumGateAlignE2E PRIVATE Tests/AlignE2ETest.cpp)
+target_include_directories(GHSDrumGateAlignE2E PRIVATE Source)
+target_link_libraries(GHSDrumGateAlignE2E PRIVATE GHSDrumGate juce::juce_audio_utils juce::juce_gui_basics)
+target_compile_definitions(GHSDrumGateAlignE2E PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+add_test(NAME GHSDrumGateAlignE2E COMMAND GHSDrumGateAlignE2E auto-phase)

@@ -41,7 +41,7 @@ Learned profiles are saved with your session. Hit Match decides at each opening;
 |---|---|
 | Key HPF / Key LPF | Band-limit what the detector hears, e.g. HPF 180 Hz and LPF 7 kHz on snare so the kick and hats don't open it. Audio isn't filtered, only the detector. |
 | Lookahead | 0-10 ms. Delays the audio so the gate is already open when the transient arrives. Reported to the host as latency. |
-| Internal / Sidechain / MIDI | Key from the track itself, from the plugin's sidechain input, or from MIDI notes (e.g. a trigger track or a drum MIDI part). In MIDI mode each note-on opens the gate for Hold, then Release, with the note's velocity as the hit strength. |
+| Internal / Sidechain / MIDI / Align Only | Key from the track itself, from the plugin's sidechain input, or from MIDI notes (e.g. a trigger track or a drum MIDI part). In MIDI mode each note-on opens the gate for Hold, then Release, with the note's velocity as the hit strength. Align Only turns the gate off (see Align below). |
 | Trig Note | In MIDI mode: which note triggers the gate (Any, or a specific note). |
 | Key Listen | Hear the filtered key signal to dial in HPF/LPF. |
 
@@ -85,9 +85,51 @@ Match rejected, and the bar on the right is the current gain.
 deciding), reported to the host so it's compensated automatically.
 
 **Factory presets:** Init, Kick - Tight, Snare - Bleed Killer, Toms - Natural Ring, Hi-Hat - Clean,
-Snare - Two-Band Natural, Snare - Punch & Clip, Room - Duck on Kick, Kick - MIDI Trigger.
+Snare - Two-Band Natural, Snare - Punch & Clip, Overheads - Align Only, Room - Duck on Kick,
+Kick - MIDI Trigger.
 
-Not included: automatic multi-mic time/phase alignment across instances.
+## Align: time, polarity and phase across the whole kit
+
+![Align tab](screenshot-align.png)
+
+Every mic on a kit hears the same hits at slightly different times (the overheads are a metre
+or more further away than the close mics), sometimes inverted (snare bottom, kick in vs out),
+and sometimes rotated in phase. Lining them up gives a tighter low end and punchier shells
+before any EQ. The **ALIGN** tab does it for every instance at once.
+
+**Setting it up**
+1. Put GHS Drum Gate on every drum mic, early in each track's chain (before anything that
+   adds latency or changes the timing).
+2. On the overheads (and rooms), tick **Align only (no gating)**, which is Key Source = Align
+   Only, and mark them **Reference**. If no track is marked, the latest-arriving mic is used,
+   which is normally the overheads.
+3. Press **Analyse** in any instance, then play about 6 s of the song where the whole kit is playing.
+   Every instance in the group records the same stretch of the timeline. Each mic is then
+   analysed against the reference and gets its own correction, and Align switches on.
+4. Done. The table in every instance shows each track's offset, whether it was flipped or rotated,
+   and how much better it lines up with the reference (before > after).
+
+**Controls**
+| Control | What it does |
+|---|---|
+| Name in the kit | How this track is listed in every instance's table. Defaults to the host's track name. |
+| Align | Applies this track's correction. Every aligned instance adds the same fixed 10 ms (plus a few samples) of latency, which the host compensates, so tracks can be moved earlier as well as later. |
+| Reference | The track everything else is lined up to. |
+| Align only (no gating) | Passes the audio straight through (no gate, no dynamics), just aligned. For overheads and rooms. |
+| Group A-D | Instances only align with others in the same group, e.g. for two kits in one session. |
+| Time + Polarity / Time + Phase | Polarity only flips (0 or 180 degrees). Phase also rotates by any angle through a matched allpass pair on every aligned track, for mics whose phase relationship isn't a clean flip. |
+| Analyse / Reset | Records and analyses the group, or clears every correction in it. |
+
+**How it works:** for each mic, a whitened cross-correlation (GCC-PHAT) against the reference
+finds the arrival time. It focuses on the moments that mic's own drum is playing, so a kick
+mic isn't lined up to its snare bleed. The time is refined to a fraction of a sample and played
+back through a 32-tap windowed-sinc fractional delay. The best polarity, or phase rotation, is
+then found in closed form after the time shift. Corrections are saved with the session.
+
+**Limits:** ±10 ms of difference between any mic and the reference (about 3.4 m). Mics further
+away are shown as out of range and left as they are. Instances find each other inside the
+DAW's process, so a host that runs each plugin in its own sandboxed process would show each
+instance alone. Logic runs AU v2 plugins like this one in-process.
 
 ## Building
 
@@ -112,6 +154,16 @@ intact, lookahead timing, range, retrigger guard, hysteresis, duck mode, transie
 of a slow swell, key filtering, block-size independence, two-band split, adaptive decay,
 leveller, per-hit clipper, Hit Match learning/rejection, MIDI triggering):
 
+`Tests/AlignDSPTest.cpp` checks the alignment maths: the Hilbert pair, fractional delay,
+sub-sample lag estimation in both directions, out-of-range detection, polarity, phase rotation,
+a realistic kit with bleed (kick, snare top and flipped snare bottom against the overheads, in
+both modes), and the realtime aligner.
+
+`Tests/AlignE2ETest.cpp` runs four real plugin instances on a synthetic kit with known mic
+distances and a fake host playhead. It presses Analyse through the shared registry, then checks
+that every instance's output really lines up with the overheads afterwards.
+
 ```
-cmake --build build-gate --target GHSDrumGateDSPTest && ./build-gate/GHSDrumGateDSPTest
+cmake --build build-gate --target GHSDrumGateDSPTest GHSDrumGateAlignTest GHSDrumGateAlignE2E
+cd build-gate && ctest --output-on-failure
 ```

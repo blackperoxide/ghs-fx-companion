@@ -375,7 +375,8 @@ GHSDrumGateEditor::GHSDrumGateEditor(GHSDrumGateProcessor& p)
       mix(p.apvts, GateParamIDs::mix, "MIX"),
       output(p.apvts, GateParamIDs::output, "OUTPUT"),
       midiNote(p.apvts, GateParamIDs::midiNote, "NOTE"),
-      midiVel(p.apvts, GateParamIDs::midiVelSens, "VEL SENS")
+      midiVel(p.apvts, GateParamIDs::midiVelSens, "VEL SENS"),
+      alignPanel(p)
 {
     setLookAndFeel(&lnf);
 
@@ -441,6 +442,24 @@ GHSDrumGateEditor::GHSDrumGateEditor(GHSDrumGateProcessor& p)
     scStatus.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(scStatus);
 
+    // GATE / ALIGN tabs
+    for (auto* t : { &gateTab, &alignTab })
+    {
+        t->setClickingTogglesState(true);
+        t->setRadioGroupId(4711);
+        t->setColour(juce::TextButton::buttonColourId, panel);
+        t->setColour(juce::TextButton::buttonOnColourId, accent.withAlpha(0.9f));
+        t->setColour(juce::TextButton::textColourOffId, dimText);
+        t->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+        addAndMakeVisible(*t);
+    }
+    gateTab.setConnectedEdges(juce::Button::ConnectedOnRight);
+    alignTab.setConnectedEdges(juce::Button::ConnectedOnLeft);
+    gateTab.onClick = [this] { if (gateTab.getToggleState()) showTab(false); };
+    alignTab.onClick = [this] { if (alignTab.getToggleState()) showTab(true); };
+    addChildComponent(alignPanel);
+    gateTab.setToggleState(true, juce::dontSendNotification);
+
     setResizable(true, true);
     setResizeLimits(1000, 700, 1700, 1100);
     setSize(1100, 780);
@@ -461,6 +480,25 @@ void GHSDrumGateEditor::setLearnMode(int mode)
     proc.learnMode = mode;
     learnHitsButton.setToggleState(mode == 1, juce::dontSendNotification);
     learnSpillButton.setToggleState(mode == 2, juce::dontSendNotification);
+}
+
+std::vector<juce::Component*> GHSDrumGateEditor::gateComponents()
+{
+    return { &detectBox, &keySourceBox, &keyListenButton, &midiButton, &splitButton, &matchButton,
+             &learnHitsButton, &learnSpillButton, &clearButton, &scStatus, &matchStatus,
+             &threshold, &hysteresis, &sensitivity, &retrigger, &matchTol, &hpf, &lpf, &lookahead, &midiInNote,
+             &attack, &hold, &release, &adaptive, &punch, &range, &rangeHigh, &crossover,
+             &level, &levelTarget, &clip, &mix, &output, &midiNote, &midiVel };
+}
+
+void GHSDrumGateEditor::showTab(bool align)
+{
+    showingAlign = align;
+    for (auto* c : gateComponents()) c->setVisible(! align);
+    alignPanel.setVisible(align);
+    gateTab.setToggleState(! align, juce::dontSendNotification);
+    alignTab.setToggleState(align, juce::dontSendNotification);
+    repaint();
 }
 
 void GHSDrumGateEditor::addChoice(juce::ComboBox& box, std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& att,
@@ -557,6 +595,8 @@ void GHSDrumGateEditor::paint(juce::Graphics& g)
     g.setColour(accent);
     g.drawText("DRUM GATE", header.removeFromLeft(130), juce::Justification::centredLeft);
 
+    if (showingAlign) return;
+
     drawSection(g, detectSection, "DETECTION");
     drawSection(g, matchSection, "HIT MATCH");
     drawSection(g, keySection, "KEY");
@@ -573,6 +613,9 @@ void GHSDrumGateEditor::resized()
     header.removeFromLeft(190);
     presetBox.setBounds(header.removeFromLeft(230));
     modeBox.setBounds(header.removeFromRight(100));
+    header.removeFromRight(16);
+    alignTab.setBounds(header.removeFromRight(80));
+    gateTab.setBounds(header.removeFromRight(80));
 
     r.reduce(16, 0);
     r.removeFromBottom(14);
@@ -581,6 +624,7 @@ void GHSDrumGateEditor::resized()
     const int sectionH = 146;
     auto rows = r.removeFromBottom(sectionH * 3 + gap * 2);
     display.setBounds(r.reduced(0, 4));
+    alignPanel.setBounds(rows);
 
     auto row1 = rows.removeFromTop(sectionH); rows.removeFromTop(gap);
     auto row2 = rows.removeFromTop(sectionH); rows.removeFromTop(gap);

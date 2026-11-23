@@ -65,6 +65,7 @@ const std::vector<Preset>& factoryPresets()
         { "Snare - Punch & Clip", { { threshold, -20.f }, { hysteresis, 8.f }, { attack, 0.1f }, { hold, 35.f },
                             { release, 160.f }, { range, -40.f }, { keyHpf, 180.f }, { keyLpf, 7000.f }, { detect, 2.f },
                             { sens, 8.f }, { retrigger, 25.f }, { level, 60.f }, { levelTarget, -10.f }, { clip, 4.f } } },
+        { "Overheads - Align Only", { { keySource, 3.f }, { alignOn, 1.f }, { alignRef, 1.f } } },
         { "Room - Duck on Kick", { { mode, 1.f }, { keySource, 1.f }, { threshold, -24.f }, { hysteresis, 6.f },
                             { attack, 1.0f }, { hold, 30.f }, { release, 250.f }, { range, -12.f },
                             { keyHpf, 30.f }, { keyLpf, 800.f } } },
@@ -100,7 +101,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GHSDrumGateProcessor::create
     l.add(std::make_unique<APF>(pid(mix), "Mix", NR(0.f, 100.f, 0.1f), 100.f, withLabel("%")));
     l.add(std::make_unique<APF>(pid(output), "Output", NR(-24.f, 24.f, 0.1f), 0.f, withLabel("dB")));
     l.add(std::make_unique<juce::AudioParameterBool>(pid(keyListen), "Key Listen", false));
-    l.add(std::make_unique<juce::AudioParameterChoice>(pid(keySource), "Key Source", juce::StringArray { "Internal", "Sidechain", "MIDI" }, 0));
+    l.add(std::make_unique<juce::AudioParameterChoice>(pid(keySource), "Key Source", juce::StringArray { "Internal", "Sidechain", "MIDI", "Align Only" }, 0));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(alignOn), "Align", false));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(alignRef), "Align Reference", false));
+    l.add(std::make_unique<juce::AudioParameterChoice>(pid(alignGroup), "Align Group", juce::StringArray { "A", "B", "C", "D" }, 0));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(alignPhase), "Align Phase", false));
     l.add(std::make_unique<juce::AudioParameterInt>(pid(midiInNote), "Trigger Note In", -1, 127, -1, juce::AudioParameterIntAttributes()
               .withStringFromValueFunction([](int v, int) { return v < 0 ? juce::String("Any") : juce::MidiMessage::getMidiNoteName(v, true, true, 3); })));
     l.add(std::make_unique<APF>(pid(adaptive), "Adaptive Decay", NR(0.f, 100.f, 1.f), 0.f, withLabel("%")));
@@ -139,6 +144,16 @@ GHSDrumGateProcessor::GHSDrumGateProcessor()
     pCrossover = p(crossover);  pHitMatch = p(hitMatch);     pMatchTol = p(matchTol);
     pLevel = p(level);          pLevelTarget = p(levelTarget); pClip = p(clip);
     pMidiInNote = p(midiInNote);
+    pAlignOn = p(alignOn);      pAlignRef = p(alignRef);     pAlignGroup = p(alignGroup);
+    pAlignPhase = p(alignPhase);
+
+    alignRegistry->addMember(this);
+}
+
+GHSDrumGateProcessor::~GHSDrumGateProcessor()
+{
+    alignRegistry->removeMember(this);
+    alignCapture.freeze();
 }
 
 bool GHSDrumGateProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -163,10 +178,18 @@ void GHSDrumGateProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.prepare(sampleRate, getMainBusNumInputChannels());
     keyBuffer.setSize(1, std::max(1, samplesPerBlock), false, true, true);
 
-    const int la = engine.latencySamples(readSettings());
+    aligner.prepare(getMainBusNumInputChannels(), 2 * alignBaseSamples() + GHSAlign::sincTaps);
+    appliedAlignVersion = -1;
+
+    const int la = engine.latencySamples(readSettings()) + (pAlignOn->load() > 0.5f ? alignBaseSamples() : 0);
     setLatencySamples(la);
     reportedLatency = la;
     lastNoteSent = -1;
+}
+
+int GHSDrumGateProcessor::alignBaseSamples() const
+{
+    return int(std::lround(GHSAlign::maxAlignMs * currentSampleRate.load() / 1000.0)) + GHSAlign::Aligner::minDelay;
 }
 
 GHSGate::Settings GHSDrumGateProcessor::readSettings() const
@@ -200,6 +223,7 @@ GHSGate::Settings GHSDrumGateProcessor::readSettings() const
     s.clipDb       = pClip->load();
     s.learn        = static_cast<GHSGate::LearnMode>(juce::jlimit(0, 2, learnMode.load()));
     s.triggerFromMidi = juce::roundToInt(pKeySource->load()) == 2;
+    s.gateBypass   = juce::roundToInt(pKeySource->load()) == 3;
     return s;
 }
 
@@ -225,9 +249,11 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         }
     }
 
-    // Latency = lookahead + the hit analysis window. Hosts pick a change up on
-    // their next latency query; most re-sync on transport restart.
-    const int la = engine.latencySamples(settings);
+    // Latency = lookahead + the hit analysis window (+ the fixed alignment
+    // base when Align is on). Hosts pick a change up on their next latency
+    // query; most re-sync on transport restart.
+    const bool alignOnNow = pAlignOn->load() > 0.5f;
+    const int la = engine.latencySamples(settings) + (alignOnNow ? alignBaseSamples() : 0);
     if (la != reportedLatency)
     {
         setLatencySamples(la);
@@ -236,6 +262,20 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 
     auto mainBus = getBusBuffer(buffer, true, 0);
     const int mainChans = mainBus.getNumChannels();
+
+    // ---- alignment capture: this track's raw input, stamped with the host timeline ----
+    if (alignCapture.state.load(std::memory_order_relaxed) != GHSAlign::CaptureBuffer::Idle)
+    {
+        bool playing = false;
+        std::optional<juce::int64> time;
+        if (auto* ph = getPlayHead())
+            if (const auto pos = ph->getPosition())
+            {
+                playing = pos->getIsPlaying();
+                if (const auto t = pos->getTimeInSamples()) time = *t;
+            }
+        alignCapture.write(mainBus.getArrayOfReadPointers(), mainChans, n, playing, time);
+    }
 
     // ---- build the mono key ----
     if (keyBuffer.getNumSamples() < n)
@@ -335,6 +375,23 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     engine.process(mainBus.getArrayOfWritePointers(), mainChans, key, n,
                    midiTriggers.data(), numMidiTriggers, settings, perSample, onTrigger);
 
+    // ---- alignment: fixed base delay minus this mic's lag, then polarity / phase ----
+    if (alignOnNow)
+    {
+        const int version = rtAlignVersion.load();
+        if (version != appliedAlignVersion || ! appliedAlignOn)
+        {
+            const double sr = currentSampleRate.load();
+            const bool valid = rtAlignValid.load();
+            const double lag = valid ? rtAlignOffsetSec.load() * sr : 0.0;
+            aligner.set(double(alignBaseSamples()) - lag, valid ? rtAlignPhase.load() : 0.0, valid && rtAlignUsePhase.load());
+            if (! appliedAlignOn) aligner.reset();
+            appliedAlignVersion = version;
+        }
+        aligner.process(mainBus.getArrayOfWritePointers(), mainChans, n);
+    }
+    appliedAlignOn = alignOnNow;
+
     learnedHitCount = engine.hitProfile.count;
     learnedSpillCount = engine.spillProfile.count;
     lastMatchDistance = engine.lastMatchDistance;
@@ -401,6 +458,13 @@ void GHSDrumGateProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.setProperty("hitProfile", profileToString(sharedHitProfile), nullptr);
         state.setProperty("spillProfile", profileToString(sharedSpillProfile), nullptr);
     }
+    {
+        const juce::ScopedLock sl(alignLock);
+        state.setProperty("alignName", userAlignName, nullptr);
+        if (alignment.valid)
+            state.setProperty("alignment", juce::String(alignment.offsetSeconds * 1.0e6, 3) + " " + juce::String(alignment.phaseRad, 6)
+                                               + " " + (alignment.usePhase ? "1" : "0"), nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -418,10 +482,88 @@ void GHSDrumGateProcessor::setStateInformation(const void* data, int sizeInBytes
                 sharedSpillProfile = profileFromString(tree.getProperty("spillProfile").toString());
                 profilesPendingForEngine = true;
             }
+            {
+                GHSAlign::MemberAlignment al;
+                auto parts = juce::StringArray::fromTokens(tree.getProperty("alignment").toString(), " ", "");
+                parts.removeEmptyStrings();
+                if (parts.size() == 3)
+                {
+                    al.valid = true;
+                    al.offsetSeconds = parts[0].getDoubleValue() / 1.0e6;
+                    al.phaseRad = parts[1].getDoubleValue();
+                    al.usePhase = parts[2] == "1";
+                }
+                {
+                    const juce::ScopedLock sl(alignLock);
+                    userAlignName = tree.getProperty("alignName").toString();
+                }
+                setAlignmentInternal(al);
+            }
+            tree.removeProperty("alignment", nullptr);
+            tree.removeProperty("alignName", nullptr);
             tree.removeProperty("hitProfile", nullptr);
             tree.removeProperty("spillProfile", nullptr);
             apvts.replaceState(tree);
         }
+}
+
+// ---- Alignment ----
+
+int GHSDrumGateProcessor::getAlignGroup() const { return juce::jlimit(0, GHSAlign::numGroups - 1, juce::roundToInt(pAlignGroup->load())); }
+bool GHSDrumGateProcessor::isAlignReference() const { return pAlignRef->load() > 0.5f; }
+
+juce::String GHSDrumGateProcessor::getAlignName() const
+{
+    const juce::ScopedLock sl(alignLock);
+    if (userAlignName.isNotEmpty()) return userAlignName;
+    if (hostTrackName.isNotEmpty()) return hostTrackName;
+    return "Drum Gate " + juce::String(alignMemberId);
+}
+
+void GHSDrumGateProcessor::setUserAlignName(const juce::String& name)
+{
+    const juce::ScopedLock sl(alignLock);
+    userAlignName = name.trim();
+}
+
+juce::String GHSDrumGateProcessor::getUserAlignName() const
+{
+    const juce::ScopedLock sl(alignLock);
+    return userAlignName;
+}
+
+void GHSDrumGateProcessor::updateTrackProperties(const TrackProperties& props)
+{
+    const juce::ScopedLock sl(alignLock);
+    hostTrackName = props.name;
+}
+
+GHSAlign::MemberAlignment GHSDrumGateProcessor::getAlignment() const
+{
+    const juce::ScopedLock sl(alignLock);
+    return alignment;
+}
+
+void GHSDrumGateProcessor::setAlignmentInternal(const GHSAlign::MemberAlignment& al)
+{
+    {
+        const juce::ScopedLock sl(alignLock);
+        alignment = al;
+    }
+    rtAlignOffsetSec = al.offsetSeconds;
+    rtAlignPhase = al.phaseRad;
+    rtAlignUsePhase = al.usePhase;
+    rtAlignValid = al.valid;
+    rtAlignVersion.fetch_add(1);
+}
+
+void GHSDrumGateProcessor::applyAlignment(const GHSAlign::MemberAlignment& al)
+{
+    setAlignmentInternal(al);
+    // A fresh analysis switches alignment on for every track it covers
+    if (al.valid)
+        if (auto* p = apvts.getParameter(GateParamIDs::alignOn); p != nullptr && p->getValue() < 0.5f)
+            p->setValueNotifyingHost(1.0f);
 }
 
 juce::String GHSDrumGateProcessor::profileToString(const GHSGate::Profile& p)

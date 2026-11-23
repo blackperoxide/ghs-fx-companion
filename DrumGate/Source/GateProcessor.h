@@ -4,6 +4,8 @@
 #include <atomic>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "GateDSP.h"
+#include "AlignDSP.h"
+#include "AlignRegistry.h"
 
 /**
  * GHS Drum Gate - a drum-focused gate/ducker with a filtered key, three
@@ -11,13 +13,15 @@
  * guard, timbre-based Hit Match (learn hits / learn spill), two-band gating,
  * adaptive decay, a per-hit leveller and clipper, a punch accent, parallel mix,
  * external sidechain or MIDI triggering, key listen, and MIDI trigger output
- * for drum replacement.
+ * for drum replacement - plus cross-instance time / polarity / phase
+ * alignment of every mic on the kit (see AlignRegistry.h).
  */
-class GHSDrumGateProcessor : public juce::AudioProcessor
+class GHSDrumGateProcessor : public juce::AudioProcessor,
+                             public GHSAlign::AlignMember
 {
 public:
     GHSDrumGateProcessor();
-    ~GHSDrumGateProcessor() override = default;
+    ~GHSDrumGateProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -74,12 +78,42 @@ public:
     std::atomic<float> lastMatchDistance { -1.0f };
     std::atomic<bool> lastHitRejected { false };
 
+    // ---- Alignment (GHSAlign::AlignMember; message thread) ----
+    int getAlignGroup() const override;
+    bool isAlignReference() const override;
+    juce::String getAlignName() const override;
+    GHSAlign::CaptureBuffer& getAlignCapture() override { return alignCapture; }
+    double getAlignSampleRate() const override { return currentSampleRate.load(); }
+    void applyAlignment(const GHSAlign::MemberAlignment&) override;
+
+    GHSAlign::MemberAlignment getAlignment() const;
+    /** The name shown in every instance's Align table. Empty = use the host's track name. */
+    void setUserAlignName(const juce::String&);
+    juce::String getUserAlignName() const;
+    void updateTrackProperties(const TrackProperties&) override;
+    GHSAlign::Registry& getAlignRegistry() { return *alignRegistry; }
+
     /** Samples per display frame - the editor uses it to label the time axis. */
     static constexpr int samplesPerFrame = 128;
     double getCurrentSampleRate() const { return currentSampleRate.load(); }
 
 private:
     GHSGate::Settings readSettings() const;
+    int alignBaseSamples() const;
+    void setAlignmentInternal(const GHSAlign::MemberAlignment&); // fixed delay every aligned instance adds (and reports as latency)
+
+    juce::SharedResourcePointer<GHSAlign::Registry> alignRegistry;
+    GHSAlign::CaptureBuffer alignCapture;
+    GHSAlign::Aligner aligner;
+    mutable juce::CriticalSection alignLock;  // guards the strings + alignment below (message thread only)
+    juce::String hostTrackName, userAlignName;
+    GHSAlign::MemberAlignment alignment;
+    // audio thread copy of the alignment
+    std::atomic<double> rtAlignOffsetSec { 0.0 }, rtAlignPhase { 0.0 };
+    std::atomic<bool> rtAlignUsePhase { false }, rtAlignValid { false };
+    std::atomic<int> rtAlignVersion { 0 };
+    int appliedAlignVersion = -1;
+    bool appliedAlignOn = false;
 
     GHSGate::Engine engine;
 
@@ -128,6 +162,10 @@ private:
     std::atomic<float>* pMidiNote = nullptr;
     std::atomic<float>* pMidiVelSens = nullptr;
     std::atomic<float>* pMidiInNote = nullptr;
+    std::atomic<float>* pAlignOn = nullptr;
+    std::atomic<float>* pAlignRef = nullptr;
+    std::atomic<float>* pAlignGroup = nullptr;
+    std::atomic<float>* pAlignPhase = nullptr;
     std::atomic<float>* pClip = nullptr;
     std::atomic<float>* pLevelTarget = nullptr;
     std::atomic<float>* pLevel = nullptr;
@@ -174,4 +212,8 @@ namespace GateParamIDs
     inline constexpr const char* levelTarget = "levelTarget";
     inline constexpr const char* clip       = "clip";
     inline constexpr const char* midiInNote = "midiInNote";
+    inline constexpr const char* alignOn    = "alignOn";
+    inline constexpr const char* alignRef   = "alignReference";
+    inline constexpr const char* alignGroup = "alignGroup";
+    inline constexpr const char* alignPhase = "alignPhase";
 }

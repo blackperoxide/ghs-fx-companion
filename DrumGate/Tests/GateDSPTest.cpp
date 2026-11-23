@@ -314,6 +314,17 @@ int main()
               "MIDI: gate opens just before the hit reaches the output");
     }
 
+    // 16. Align Only (gate bypass): audio passes untouched apart from the fixed delay, no triggers
+    {
+        auto x = drumTrack(1.0, { 0.25 }, -40.0f);
+        Settings s = base; s.gateBypass = true; s.punchDb = 6.0f; s.levelAmount = 1.0f; s.clipDb = 6.0f; s.bandSplit = true;
+        auto r = runGate(x, s);
+        float maxErr = 0.0f;
+        for (size_t i = size_t(r.latency) + 2000; i < x.size(); ++i)
+            maxErr = std::max(maxErr, std::fabs(r.out[i] - x[i - size_t(r.latency)]));
+        CHECK(r.opens == 0 && maxErr < 1e-3f, "gate bypass: no triggers, output = delayed input (max err %.2g)", maxErr);
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }
