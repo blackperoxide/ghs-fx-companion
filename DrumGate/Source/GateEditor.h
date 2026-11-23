@@ -109,6 +109,47 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AlignPanel)
 };
 
+/**
+ * The REPLACE tab: drum replacement / reinforcement. Pick a built-in kit or
+ * drop your own one-shots (auto-layered by loudness), and set how the samples
+ * sit against the original.
+ */
+class ReplacePanel : public juce::Component, public juce::FileDragAndDropTarget, private juce::Timer
+{
+public:
+    explicit ReplacePanel(GHSDrumGateProcessor&);
+    ~ReplacePanel() override;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    bool isInterestedInFileDrag(const juce::StringArray&) override { return true; }
+    void fileDragEnter(const juce::StringArray&, int, int) override { dragging = true; repaint(); }
+    void fileDragExit(const juce::StringArray&) override { dragging = false; repaint(); }
+    void filesDropped(const juce::StringArray& files, int, int) override;
+
+private:
+    void timerCallback() override;
+    void load(const juce::Array<juce::File>&);
+
+    GHSDrumGateProcessor& proc;
+    juce::ToggleButton replaceButton { "Replace / Add Samples" }, chokeButton { "Choke" };
+    juce::ComboBox kitBox;
+    juce::TextButton loadButton { "Load Samples..." }, clearButton { "Clear" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> replaceAtt, chokeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> kitAtt;
+    std::unique_ptr<juce::FileChooser> chooser;
+    GateKnob sampleLevel, originalLevel, dynamics, pitch, length, offset;
+    juce::StringArray layers;
+    juce::String message;
+    int lastHitCount = 0;
+    float flash = 0.0f;
+    int flashLayer = -1;
+    float flashVelocity = 0.0f;
+    bool dragging = false;
+    juce::Rectangle<int> left, right, listArea;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ReplacePanel)
+};
+
 class GHSDrumGateEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -150,10 +191,17 @@ private:
     juce::Rectangle<int> detectSection, matchSection, keySection, envSection, bandSection, dynSection, outSection;
 
     // GATE / ALIGN tabs
-    juce::TextButton gateTab { "GATE" }, alignTab { "ALIGN" };
+    juce::TextButton gateTab { "GATE" }, alignTab { "ALIGN" }, replaceTab { "REPLACE" };
     AlignPanel alignPanel;
-    bool showingAlign = false;
-    void showTab(bool align);
+    ReplacePanel replacePanel;
+    int tab = 0; // 0 gate, 1 align, 2 replace
+    bool showingAlign = false; // any tab other than GATE (the gate sections aren't drawn)
+    void showTab(int which);
+
+    // global switches in the header
+    juce::ToggleButton bypassButton { "Bypass" }, autoGainButton { "Auto Gain" }, liveButton { "Live" }, safetyButton { "Safety" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt, autoGainAtt, liveAtt, safetyAtt;
+    GateKnob ceiling;
     std::vector<juce::Component*> gateComponents();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSDrumGateEditor)

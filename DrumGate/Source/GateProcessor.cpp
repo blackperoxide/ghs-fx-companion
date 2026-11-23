@@ -1,5 +1,7 @@
+#include <thread>
 #include "GateProcessor.h"
 #include "GateEditor.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 namespace
 {
@@ -65,6 +67,17 @@ const std::vector<Preset>& factoryPresets()
         { "Snare - Punch & Clip", { { threshold, -20.f }, { hysteresis, 8.f }, { attack, 0.1f }, { hold, 35.f },
                             { release, 160.f }, { range, -40.f }, { keyHpf, 180.f }, { keyLpf, 7000.f }, { detect, 2.f },
                             { sens, 8.f }, { retrigger, 25.f }, { level, 60.f }, { levelTarget, -10.f }, { clip, 4.f } } },
+        { "Kick - Replace (Synth Kick)", { { threshold, -22.f }, { hysteresis, 8.f }, { hold, 30.f }, { release, 80.f },
+                            { keyHpf, 35.f }, { keyLpf, 1200.f }, { detect, 2.f }, { sens, 8.f }, { retrigger, 50.f },
+                            { lookahead, 2.f }, { replaceOn, 1.f }, { kit, 1.f }, { originalLevel, -6.f }, { sampleDyn, 60.f } } },
+        { "Kick - Reinforce in a Mix", { { threshold, -17.f }, { hysteresis, 8.f }, { hold, 30.f }, { release, 80.f },
+                            { range, 0.f }, { keyHpf, 30.f }, { keyLpf, 120.f }, { detect, 2.f }, { sens, 8.f },
+                            { retrigger, 120.f }, { lookahead, 10.f }, { replaceOn, 1.f }, { kit, 1.f }, { sampleLevel, -4.f },
+                            { sampleDyn, 60.f }, { sampleOffset, -3.2f } } },
+        { "Snare - Reinforce (Synth Snare)", { { threshold, -20.f }, { hysteresis, 8.f }, { hold, 35.f }, { release, 160.f },
+                            { range, -40.f }, { keyHpf, 180.f }, { keyLpf, 7000.f }, { detect, 2.f }, { sens, 8.f },
+                            { retrigger, 25.f }, { lookahead, 2.f }, { replaceOn, 1.f }, { kit, 2.f }, { sampleLevel, -6.f },
+                            { sampleDyn, 70.f } } },
         { "Overheads - Align Only", { { keySource, 3.f }, { alignOn, 1.f }, { alignRef, 1.f } } },
         { "Room - Duck on Kick", { { mode, 1.f }, { keySource, 1.f }, { threshold, -24.f }, { hysteresis, 6.f },
                             { attack, 1.0f }, { hold, 30.f }, { release, 250.f }, { range, -12.f },
@@ -92,7 +105,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GHSDrumGateProcessor::create
                                 withLabel("dB", [](float v, int) { return v <= -79.9f ? juce::String("-inf") : juce::String(v, 1); })));
     l.add(std::make_unique<APF>(pid(lookahead), "Lookahead", NR(0.f, GHSGate::Engine::maxLookaheadMs, 0.01f), 1.f, withLabel("ms", msText)));
     l.add(std::make_unique<APF>(pid(keyHpf), "Key HPF", skewed(20.f, 8000.f, 300.f, 1.f), 60.f, withLabel("Hz", hzText)));
-    l.add(std::make_unique<APF>(pid(keyLpf), "Key LPF", skewed(200.f, 20000.f, 3000.f, 1.f), 12000.f, withLabel("Hz", hzText)));
+    l.add(std::make_unique<APF>(pid(keyLpf), "Key LPF", skewed(50.f, 20000.f, 2000.f, 1.f), 12000.f, withLabel("Hz", hzText)));
     l.add(std::make_unique<juce::AudioParameterChoice>(pid(detect), "Detect", juce::StringArray { "Peak", "RMS", "Transient" }, 0));
     l.add(std::make_unique<APF>(pid(sens), "Transient Sens", NR(0.f, 24.f, 0.1f), 6.f, withLabel("dB")));
     l.add(std::make_unique<APF>(pid(retrigger), "Retrigger Guard", skewed(0.f, 250.f, 40.f, 0.1f), 0.f, withLabel("ms", msText)));
@@ -106,6 +119,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout GHSDrumGateProcessor::create
     l.add(std::make_unique<juce::AudioParameterBool>(pid(alignRef), "Align Reference", false));
     l.add(std::make_unique<juce::AudioParameterChoice>(pid(alignGroup), "Align Group", juce::StringArray { "A", "B", "C", "D" }, 0));
     l.add(std::make_unique<juce::AudioParameterBool>(pid(alignPhase), "Align Phase", false));
+
+    auto dbOrOff = [](float v, int) { return v <= -59.9f ? juce::String("-inf") : juce::String(v, 1); };
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(replaceOn), "Replace", false));
+    l.add(std::make_unique<juce::AudioParameterChoice>(pid(kit), "Kit",
+              juce::StringArray { "User Samples", "Synth Kick", "Synth Snare", "Synth Tom", "Synth Clap" }, 1));
+    l.add(std::make_unique<APF>(pid(sampleLevel), "Sample Level", NR(-60.f, 12.f, 0.1f), 0.f, withLabel("dB", dbOrOff)));
+    l.add(std::make_unique<APF>(pid(originalLevel), "Original Level", NR(-60.f, 6.f, 0.1f), 0.f, withLabel("dB", dbOrOff)));
+    l.add(std::make_unique<APF>(pid(sampleDyn), "Sample Dynamics", NR(0.f, 100.f, 1.f), 70.f, withLabel("%")));
+    l.add(std::make_unique<APF>(pid(samplePitch), "Sample Pitch", NR(-12.f, 12.f, 0.1f), 0.f, withLabel("st")));
+    l.add(std::make_unique<APF>(pid(sampleLength), "Sample Length", NR(5.f, 100.f, 1.f), 100.f, withLabel("%")));
+    l.add(std::make_unique<APF>(pid(sampleOffset), "Sample Offset", NR(-10.f, 10.f, 0.01f), 0.f, withLabel("ms", msText)));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(sampleChoke), "Choke", true));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(autoGain), "Auto Gain", false));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(bypass), "Bypass", false));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(safety), "Safety Ceiling", true));
+    l.add(std::make_unique<APF>(pid(ceiling), "Ceiling", NR(-12.f, 0.f, 0.1f), -0.3f, withLabel("dB")));
+    l.add(std::make_unique<juce::AudioParameterBool>(pid(live), "Live Mode", false));
     l.add(std::make_unique<juce::AudioParameterInt>(pid(midiInNote), "Trigger Note In", -1, 127, -1, juce::AudioParameterIntAttributes()
               .withStringFromValueFunction([](int v, int) { return v < 0 ? juce::String("Any") : juce::MidiMessage::getMidiNoteName(v, true, true, 3); })));
     l.add(std::make_unique<APF>(pid(adaptive), "Adaptive Decay", NR(0.f, 100.f, 1.f), 0.f, withLabel("%")));
@@ -146,6 +176,15 @@ GHSDrumGateProcessor::GHSDrumGateProcessor()
     pMidiInNote = p(midiInNote);
     pAlignOn = p(alignOn);      pAlignRef = p(alignRef);     pAlignGroup = p(alignGroup);
     pAlignPhase = p(alignPhase);
+    pReplaceOn = p(replaceOn);  pKit = p(kit);               pSampleLevel = p(sampleLevel);
+    pOriginalLevel = p(originalLevel); pSampleDyn = p(sampleDyn); pSamplePitch = p(samplePitch);
+    pSampleLength = p(sampleLength); pSampleOffset = p(sampleOffset); pSampleChoke = p(sampleChoke);
+    pAutoGain = p(autoGain);    pSafety = p(safety);         pCeiling = p(ceiling);
+    pLive = p(live);
+    bypassParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter(GateParamIDs::bypass));
+
+    for (auto make : { GHSSampler::Synth::kickKit, GHSSampler::Synth::snareKit, GHSSampler::Synth::tomKit, GHSSampler::Synth::clapKit })
+        synthKits.push_back(std::make_unique<GHSSampler::Bank>(make()));
 
     alignRegistry->addMember(this);
 }
@@ -179,6 +218,16 @@ void GHSDrumGateProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     keyBuffer.setSize(1, std::max(1, samplesPerBlock), false, true, true);
 
     aligner.prepare(getMainBusNumInputChannels(), 2 * alignBaseSamples() + GHSAlign::sincTaps);
+    sampler.prepare(sampleRate);
+    const int chans = std::max(1, getMainBusNumInputChannels());
+    dryLine.setSize(chans, int(sampleRate * 0.06) + samplesPerBlock + 16, false, true, true);
+    dryLine.clear();
+    dryWritePos = 0;
+    dryBlock.setSize(chans, std::max(1, samplesPerBlock), false, true, true);
+    bypassMix = bypassParam != nullptr && bypassParam->get() ? 1.0f : 0.0f;
+    agInEnergy = agOutEnergy = 1e-9;
+    agLoudDb = -120.0;
+    agGain = 1.0f;
     appliedAlignVersion = -1;
 
     const int la = engine.latencySamples(readSettings()) + (pAlignOn->load() > 0.5f ? alignBaseSamples() : 0);
@@ -224,6 +273,7 @@ GHSGate::Settings GHSDrumGateProcessor::readSettings() const
     s.learn        = static_cast<GHSGate::LearnMode>(juce::jlimit(0, 2, learnMode.load()));
     s.triggerFromMidi = juce::roundToInt(pKeySource->load()) == 2;
     s.gateBypass   = juce::roundToInt(pKeySource->load()) == 3;
+    s.liveMode     = pLive->load() > 0.5f;
     return s;
 }
 
@@ -262,6 +312,30 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 
     auto mainBus = getBusBuffer(buffer, true, 0);
     const int mainChans = mainBus.getNumChannels();
+
+    // ---- the input, delayed by exactly the plugin's latency: what bypass plays (no timing jump) ----
+    {
+        const int cap = dryLine.getNumSamples();
+        if (dryBlock.getNumSamples() < n) dryBlock.setSize(dryBlock.getNumChannels(), n, false, false, true);
+        const int chans = std::min(mainChans, dryLine.getNumChannels());
+        const int delay = juce::jlimit(0, cap - n - 1, la);
+        for (int ch = 0; ch < chans; ++ch)
+        {
+            const float* in = mainBus.getReadPointer(ch);
+            float* line = dryLine.getWritePointer(ch);
+            float* out = dryBlock.getWritePointer(ch);
+            int w = dryWritePos;
+            for (int i = 0; i < n; ++i)
+            {
+                line[w] = in[i];
+                int r = w - delay;
+                if (r < 0) r += cap;
+                out[i] = line[r];
+                if (++w == cap) w = 0;
+            }
+        }
+        dryWritePos = (dryWritePos + n) % cap;
+    }
 
     // ---- alignment capture: this track's raw input, stamped with the host timeline ----
     if (alignCapture.state.load(std::memory_order_relaxed) != GHSAlign::CaptureBuffer::Idle)
@@ -324,7 +398,7 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     }
 
     // ---- MIDI: pass input through, add our triggers ----
-    const bool midiOut = pMidiOn->load() > 0.5f;
+    const bool midiOut = pMidiOn->load() > 0.5f && ! (bypassParam != nullptr && bypassParam->get());
     const int note = juce::jlimit(0, 127, juce::roundToInt(pMidiNote->load()));
     const float velSens = pMidiVelSens->load() / 100.0f;
 
@@ -338,6 +412,8 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     {
         if (e.isOpen) pending.hit = true;
         if (e.rejected) { pending.rejected = true; return; }
+        if (e.isOpen && numPendingTriggers < int(pendingTriggers.size()))
+            pendingTriggers[size_t(numPendingTriggers++)] = { e.sampleOffset, 0.05f + 0.95f * e.strength, e.onsetBack };
         if (! midiOut) return;
 
         if (e.isOpen)
@@ -372,8 +448,57 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         }
     };
 
+    numPendingTriggers = 0;
     engine.process(mainBus.getArrayOfWritePointers(), mainChans, key, n,
                    midiTriggers.data(), numMidiTriggers, settings, perSample, onTrigger);
+
+    // ---- drum replacement: original level, then the samples on every accepted hit ----
+    {
+        const float orig = pOriginalLevel->load();
+        const bool replace = pReplaceOn->load() > 0.5f && ! settings.gateBypass;
+        if (replace && orig < 0.0f)
+            mainBus.applyGain(orig <= -59.9f ? 0.0f : juce::Decibels::decibelsToGain(orig));
+
+        // pick the kit (the message thread may be swapping the user kit: see publishUserBank)
+        audioPickingBank.store(true);
+        const int kitIndex = juce::roundToInt(pKit->load());
+        const GHSSampler::Bank* want = kitIndex == 0 ? userBankWanted.load()
+                                                     : synthKits[size_t(juce::jlimit(1, int(synthKits.size()), kitIndex) - 1)].get();
+        if (want != sampler.getBank()) sampler.setBank(want);
+        userBankInUse.store(kitIndex == 0 ? want : nullptr);
+        audioPickingBank.store(false);
+
+        if (replace)
+        {
+            GHSSampler::Params sp;
+            const float lvl = pSampleLevel->load();
+            sp.levelDb = lvl <= -59.9f ? -200.0f : lvl;
+            sp.dynamics = pSampleDyn->load() / 100.0f;
+            sp.pitchSemis = pSamplePitch->load();
+            sp.length = pSampleLength->load() / 100.0f;
+            sp.choke = pSampleChoke->load() > 0.5f;
+
+            // The audio is delayed by lookahead + window, so a transient that began
+            // `onsetBack` samples before the hit was decided reaches the output
+            // (lookahead + window - onsetBack) samples after the decision. Start the
+            // sample exactly there, plus the user's offset. If the transient began
+            // earlier than the lookahead can cover, the sample starts as early as
+            // it can (raise Lookahead to fix that).
+            const int ahead = engine.lookaheadSamples(settings) + engine.windowFor(settings);
+            const int offset = juce::roundToInt(pSampleOffset->load() * currentSampleRate.load() / 1000.0);
+            for (int t = 0; t < numPendingTriggers; ++t)
+            {
+                const auto& pt = pendingTriggers[size_t(t)];
+                sampler.trigger(std::max(0, pt.offset + ahead - pt.onsetBack + offset), pt.velocity, sp);
+                lastHitLayer = sampler.lastHit.layer;
+                lastHitVelocity = sampler.lastHit.velocity;
+                hitCounter.fetch_add(1);
+            }
+            sampler.render(mainBus.getArrayOfWritePointers(), mainChans, n);
+        }
+        else if (sampler.activeVoices() > 0)
+            sampler.reset();
+    }
 
     // ---- alignment: fixed base delay minus this mic's lag, then polarity / phase ----
     if (alignOnNow)
@@ -391,6 +516,98 @@ void GHSDrumGateProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         aligner.process(mainBus.getArrayOfWritePointers(), mainChans, n);
     }
     appliedAlignOn = alignOnNow;
+
+    const bool bypassed = bypassParam != nullptr && bypassParam->get();
+
+    // ---- auto gain: match the processed level to the input's, measured on the loud parts ----
+    {
+        double eIn = 0.0, eOut = 0.0;
+        const int chans = std::min(mainChans, dryBlock.getNumChannels());
+        for (int ch = 0; ch < chans; ++ch)
+        {
+            const float* d = dryBlock.getReadPointer(ch);
+            const float* w = mainBus.getReadPointer(ch);
+            for (int i = 0; i < n; ++i) { eIn += double(d[i]) * d[i]; eOut += double(w[i]) * w[i]; }
+        }
+        const double blockDb = 10.0 * std::log10(eIn / double(std::max(1, n * chans)) + 1e-20);
+        const double sr = currentSampleRate.load();
+        agLoudDb = std::max(blockDb, agLoudDb - 1.0 * double(n) / sr); // tracks the loud level, falls 1 dB/s
+        float target = 1.0f;
+        if (pAutoGain->load() > 0.5f && ! bypassed)
+        {
+            if (blockDb > agLoudDb - 20.0 && blockDb > -80.0) // only the loud parts (the hits), not the gaps
+            {
+                const double a = 1.0 - std::exp(-double(n) / (sr * 3.0));
+                agInEnergy += a * (eIn - agInEnergy);
+                agOutEnergy += a * (eOut - agOutEnergy);
+            }
+            target = float(juce::jlimit(0.125, 8.0, std::sqrt(agInEnergy / std::max(agOutEnergy, 1e-20))));
+        }
+        const float next = agGain + (target - agGain) * float(1.0 - std::exp(-double(n) / (sr * 0.25)));
+        if (std::abs(next - 1.0f) > 1e-6f || std::abs(agGain - 1.0f) > 1e-6f)
+            for (int ch = 0; ch < mainChans; ++ch)
+                mainBus.applyGainRamp(ch, 0, n, agGain, next);
+        agGain = next;
+        autoGainDb = juce::Decibels::gainToDecibels(agGain);
+    }
+
+    // ---- safety ceiling: in a live rig the converter clips at 0 dBFS no matter what ----
+    if (pSafety->load() > 0.5f)
+    {
+        const float ceil = juce::Decibels::decibelsToGain(pCeiling->load());
+        bool touched = false;
+        for (int ch = 0; ch < mainChans; ++ch)
+        {
+            float* d = mainBus.getWritePointer(ch);
+            for (int i = 0; i < n; ++i)
+            {
+                const float a = std::abs(d[i]);
+                if (a > 0.7f * ceil)
+                {
+                    touched |= a > ceil;
+                    d[i] = juce::jlimit(-ceil, ceil, GHSGate::Engine::softClip(d[i], ceil));
+                }
+            }
+        }
+        if (touched) safetyHold = int(currentSampleRate.load() * 0.5);
+        else safetyHold = std::max(0, safetyHold - n);
+        safetyActive = safetyHold > 0;
+    }
+    else
+        safetyActive = false;
+
+    // ---- bypass: crossfade (10 ms) to the latency-matched dry input ----
+    {
+        const float target = bypassed ? 1.0f : 0.0f;
+        if (std::abs(bypassMix - target) > 1e-6f || bypassed)
+        {
+            const float step = float(n) / float(currentSampleRate.load() * 0.010);
+            const float next = target > bypassMix ? std::min(target, bypassMix + step) : std::max(target, bypassMix - step);
+            const int chans = std::min(mainChans, dryBlock.getNumChannels());
+            for (int ch = 0; ch < chans; ++ch)
+            {
+                float* w = mainBus.getWritePointer(ch);
+                const float* d = dryBlock.getReadPointer(ch);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float m = bypassMix + (next - bypassMix) * float(i) / float(n);
+                    w[i] = w[i] * (1.0f - m) + d[i] * m;
+                }
+            }
+            bypassMix = next;
+        }
+    }
+    if (bypassed)
+    {
+        // MIDI: pass the input through untouched, add no triggers of our own
+        if (lastNoteSent >= 0) { midi.addEvent(juce::MidiMessage::noteOff(1, lastNoteSent), n - 1); lastNoteSent = -1; }
+    }
+
+    {
+        float pk = 0.0f;
+        for (int ch = 0; ch < mainChans; ++ch) pk = std::max(pk, mainBus.getMagnitude(ch, 0, n));
+        outputPeakDb = juce::Decibels::gainToDecibels(pk, -120.0f);
+    }
 
     learnedHitCount = engine.hitProfile.count;
     learnedSpillCount = engine.spillProfile.count;
@@ -461,6 +678,7 @@ void GHSDrumGateProcessor::getStateInformation(juce::MemoryBlock& destData)
     {
         const juce::ScopedLock sl(alignLock);
         state.setProperty("alignName", userAlignName, nullptr);
+        state.setProperty("userSamples", userSamplePaths.joinIntoString("\n"), nullptr);
         if (alignment.valid)
             state.setProperty("alignment", juce::String(alignment.offsetSeconds * 1.0e6, 3) + " " + juce::String(alignment.phaseRad, 6)
                                                + " " + (alignment.usePhase ? "1" : "0"), nullptr);
@@ -499,12 +717,119 @@ void GHSDrumGateProcessor::setStateInformation(const void* data, int sizeInBytes
                 }
                 setAlignmentInternal(al);
             }
+            {
+                juce::Array<juce::File> files;
+                for (auto& path : juce::StringArray::fromLines(tree.getProperty("userSamples").toString()))
+                    if (path.isNotEmpty()) files.add(juce::File(path));
+                if (! files.isEmpty()) loadUserSamples(files);
+            }
+            tree.removeProperty("userSamples", nullptr);
             tree.removeProperty("alignment", nullptr);
             tree.removeProperty("alignName", nullptr);
             tree.removeProperty("hitProfile", nullptr);
             tree.removeProperty("spillProfile", nullptr);
             apvts.replaceState(tree);
         }
+}
+
+// ---- Drum replacement ----
+
+juce::String GHSDrumGateProcessor::loadUserSamples(const juce::Array<juce::File>& files)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    auto bank = std::make_unique<GHSSampler::Bank>();
+    bank->name = "User Samples";
+    juce::StringArray paths, problems;
+
+    // a folder counts as all the audio files in it
+    juce::Array<juce::File> all;
+    for (auto& f : files)
+    {
+        if (f.isDirectory())
+            for (auto& c : f.findChildFiles(juce::File::findFiles, false, fm.getWildcardForAllFormats()))
+                all.add(c);
+        else
+            all.add(f);
+    }
+
+    for (auto& f : all)
+    {
+        if (bank->samples.size() >= 64) { problems.add("only the first 64 files were loaded"); break; }
+        std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(f));
+        if (reader == nullptr) { problems.add(f.getFileName() + " (not a readable audio file)"); continue; }
+        const auto len = (int) std::min<juce::int64>(reader->lengthInSamples, juce::int64(reader->sampleRate * 10.0));
+        const int chans = (int) std::min<unsigned int>(2, reader->numChannels);
+        if (len <= 0 || chans <= 0) { problems.add(f.getFileName() + " (empty)"); continue; }
+        juce::AudioBuffer<float> buf(chans, len);
+        reader->read(&buf, 0, len, 0, true, chans > 1);
+        GHSSampler::Sample smp;
+        smp.name = f.getFileNameWithoutExtension().toStdString();
+        smp.sampleRate = reader->sampleRate;
+        smp.data.resize(size_t(chans));
+        for (int ch = 0; ch < chans; ++ch)
+            smp.data[size_t(ch)].assign(buf.getReadPointer(ch), buf.getReadPointer(ch) + len);
+        smp.analyse();
+        bank->samples.push_back(std::move(smp));
+        paths.add(f.getFullPathName());
+    }
+
+    if (bank->samples.empty())
+        return problems.isEmpty() ? juce::String("No audio files found") : "Couldn't load: " + problems.joinIntoString(", ");
+
+    bank->build();
+    userSamplePaths = paths;
+    publishUserBank(std::move(bank));
+
+    // switch the kit to User Samples
+    if (auto* k = apvts.getParameter(GateParamIDs::kit))
+        k->setValueNotifyingHost(k->convertTo0to1(0.0f));
+    return problems.isEmpty() ? juce::String() : "Skipped: " + problems.joinIntoString(", ");
+}
+
+void GHSDrumGateProcessor::clearUserSamples()
+{
+    userSamplePaths.clear();
+    publishUserBank(nullptr);
+}
+
+juce::StringArray GHSDrumGateProcessor::getUserSamplePaths() const { return userSamplePaths; }
+
+void GHSDrumGateProcessor::publishUserBank(std::unique_ptr<GHSSampler::Bank> bank)
+{
+    const GHSSampler::Bank* fresh = bank.get();
+    if (bank) userBanks.push_back(std::move(bank));
+    userBankWanted.store(fresh);
+
+    // Free kits the audio thread can no longer be using: wait out a block
+    // that's in the middle of picking, then keep only the wanted one and
+    // whichever it last acknowledged.
+    while (audioPickingBank.load()) std::this_thread::yield();
+    const auto* inUse = userBankInUse.load();
+    userBanks.erase(std::remove_if(userBanks.begin(), userBanks.end(),
+                                   [&](const std::unique_ptr<GHSSampler::Bank>& b) { return b.get() != fresh && b.get() != inUse; }),
+                    userBanks.end());
+}
+
+juce::StringArray GHSDrumGateProcessor::describeCurrentKit() const
+{
+    juce::StringArray out;
+    const int kitIndex = juce::roundToInt(pKit->load());
+    const GHSSampler::Bank* b = kitIndex == 0 ? userBankWanted.load()
+                                              : synthKits[size_t(juce::jlimit(1, int(synthKits.size()), kitIndex) - 1)].get();
+    if (b == nullptr) return out;
+    const int L = int(b->layers.size());
+    for (int i = 0; i < L; ++i)
+    {
+        const auto& layer = b->layers[size_t(i)];
+        juce::String line;
+        line << "Layer " << (i + 1) << "  vel " << juce::roundToInt(127.0 * i / L) << "-" << juce::roundToInt(127.0 * (i + 1) / L) << "  ";
+        juce::StringArray names;
+        for (int idx : layer.samples) names.add(juce::String(b->samples[size_t(idx)].name));
+        line << names.joinIntoString(", ");
+        out.add(line);
+    }
+    return out;
 }
 
 // ---- Alignment ----

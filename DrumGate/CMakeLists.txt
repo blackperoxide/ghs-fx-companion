@@ -52,6 +52,7 @@ target_sources(GHSDrumGate PRIVATE
     Source/GateEditor.cpp
     Source/AlignRegistry.cpp
     Source/AlignPanel.cpp
+    Source/ReplacePanel.cpp
 )
 
 target_compile_definitions(GHSDrumGate PUBLIC
@@ -76,6 +77,10 @@ add_executable(GHSDrumGateDSPTest Tests/GateDSPTest.cpp)
 target_include_directories(GHSDrumGateDSPTest PRIVATE Source)
 enable_testing()
 add_test(NAME GHSDrumGateDSP COMMAND GHSDrumGateDSPTest)
+
+add_executable(GHSDrumGateSamplerTest Tests/SamplerTest.cpp)
+target_include_directories(GHSDrumGateSamplerTest PRIVATE Source)
+add_test(NAME GHSDrumGateSampler COMMAND GHSDrumGateSamplerTest)
 
 add_executable(GHSDrumGateAlignTest Tests/AlignDSPTest.cpp)
 target_include_directories(GHSDrumGateAlignTest PRIVATE Source)

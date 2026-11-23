@@ -67,7 +67,7 @@ AlignPanel::AlignPanel(GHSDrumGateProcessor& p) : proc(p)
 
 AlignPanel::~AlignPanel() { stopTimer(); }
 
-void AlignPanel::timerCallback() { if (isShowing()) refresh(); }
+void AlignPanel::timerCallback() { if (isVisible()) refresh(); }
 
 void AlignPanel::refresh()
 {

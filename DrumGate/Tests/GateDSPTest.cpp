@@ -18,6 +18,7 @@ struct Run
     int opens = 0, closes = 0;
     std::vector<int> openAt;
     std::vector<float> strengths;
+    std::vector<int> onsetAt; // where each hit's transient was located (absolute input sample)
     int latency = 0;
 };
 
@@ -66,7 +67,8 @@ static Run runGate(const std::vector<float>& input, const Settings& s, int block
         e.process(chans, 1, input.data() + start, n, blockMidi.data(), int(blockMidi.size()), s,
                   [&](int i, float, float, float g) { r.gain[start + size_t(i)] = g; },
                   [&](const TriggerEvent& t) {
-                      if (t.isOpen) { ++r.opens; r.openAt.push_back(int(start) + t.sampleOffset); r.strengths.push_back(t.strength); }
+                      if (t.isOpen) { ++r.opens; r.openAt.push_back(int(start) + t.sampleOffset); r.strengths.push_back(t.strength);
+                                     r.onsetAt.push_back(int(start) + t.sampleOffset - t.onsetBack); }
                       else if (! t.rejected) ++r.closes;
                   });
     }
@@ -323,6 +325,44 @@ int main()
         for (size_t i = size_t(r.latency) + 2000; i < x.size(); ++i)
             maxErr = std::max(maxErr, std::fabs(r.out[i] - x[i - size_t(r.latency)]));
         CHECK(r.opens == 0 && maxErr < 1e-3f, "gate bypass: no triggers, output = delayed input (max err %.2g)", maxErr);
+    }
+
+    // 17. Live mode: ~3 ms less latency, still catches the hit and passes it intact
+    {
+        auto x = drumTrack(1.0, { 0.25 });
+        Settings s = base; s.liveMode = true; s.lookaheadMs = 0.0f;
+        auto r = runGate(x, s);
+        Settings n = base; n.lookaheadMs = 0.0f;
+        auto rn = runGate(x, n);
+        const double la = r.latency / sr;
+        const float inHit = peakDb(r.in, 0.25, 0.30), outHit = peakDb(r.out, 0.25 + la, 0.30 + la);
+        CHECK(r.latency == 1 && rn.latency == int(sr * 0.003) && r.opens == 1 && std::fabs(inHit - outHit) < 1.0f,
+              "live mode: latency %d samples (normal %d), hit %.2f -> %.2f dB", r.latency, rn.latency, inHit, outHit);
+    }
+
+    // 18. Onset location: the reported transient start is within 0.5 ms of the real one,
+    //     even with a heavy key low-pass and a high threshold (both detect late)
+    {
+        auto x = drumTrack(1.0, { 0.2, 0.6 }, -70.0f, -3.0f, 60.0);
+        Settings s = base; s.keyLpfHz = 150.0f; s.thresholdDb = -12.0f; s.detect = DetectMode::Transient;
+        auto r = runGate(x, s);
+        bool ok = r.opens == 2;
+        for (size_t k = 0; k < r.onsetAt.size() && k < 2; ++k)
+        {
+            const double err = (r.onsetAt[k] - (k == 0 ? 0.2 : 0.6) * sr) * 1000.0 / sr;
+            std::printf("      hit %d: decided %.2f ms after the onset, located at %+.2f ms\n", int(k),
+                        (r.openAt[k] - (k == 0 ? 0.2 : 0.6) * sr) * 1000.0 / sr, err);
+            ok &= std::fabs(err) < 0.5;
+        }
+        CHECK(ok, "hit onsets located to within 0.5 ms");
+    }
+
+    // 19. A new hit while the gate is still open (long hold) still counts as a hit
+    {
+        auto x = drumTrack(1.5, { 0.2, 0.45, 0.7 }, -70.0f, -6.0f);
+        Settings s = base; s.holdMs = 1000.0f; s.releaseMs = 300.0f; // gate never closes between hits
+        auto r = runGate(x, s);
+        CHECK(r.opens == 3, "re-hits while open: %d hits for 3 (gate held open throughout)", r.opens);
     }
 
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");

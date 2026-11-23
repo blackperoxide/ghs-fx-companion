@@ -6,6 +6,7 @@
 #include "GateDSP.h"
 #include "AlignDSP.h"
 #include "AlignRegistry.h"
+#include "SamplerDSP.h"
 
 /**
  * GHS Drum Gate - a drum-focused gate/ducker with a filtered key, three
@@ -93,6 +94,24 @@ public:
     void updateTrackProperties(const TrackProperties&) override;
     GHSAlign::Registry& getAlignRegistry() { return *alignRegistry; }
 
+    // ---- Drum replacement (message thread) ----
+    /** Loads one-shots (WAV/AIFF/FLAC/...) as the "User Samples" kit. Returns an error message, or empty on success. */
+    juce::String loadUserSamples(const juce::Array<juce::File>& files);
+    void clearUserSamples();
+    juce::StringArray getUserSamplePaths() const;
+    /** Layer summary of the selected kit, for the UI: one line per layer. */
+    juce::StringArray describeCurrentKit() const;
+    std::atomic<int> lastHitLayer { -1 };
+    std::atomic<float> lastHitVelocity { 0.0f };
+    std::atomic<int> hitCounter { 0 };
+
+    // ---- Output metering ----
+    std::atomic<float> autoGainDb { 0.0f };
+    std::atomic<float> outputPeakDb { -120.0f };
+    std::atomic<bool> safetyActive { false }; // the ceiling touched a peak recently
+
+    juce::AudioParameterBool* getBypassParameter() const override { return bypassParam; }
+
     /** Samples per display frame - the editor uses it to label the time axis. */
     static constexpr int samplesPerFrame = 128;
     double getCurrentSampleRate() const { return currentSampleRate.load(); }
@@ -101,6 +120,29 @@ private:
     GHSGate::Settings readSettings() const;
     int alignBaseSamples() const;
     void setAlignmentInternal(const GHSAlign::MemberAlignment&); // fixed delay every aligned instance adds (and reports as latency)
+
+    // drum replacement
+    GHSSampler::Sampler sampler;
+    std::vector<std::unique_ptr<GHSSampler::Bank>> synthKits;      // permanent
+    std::vector<std::unique_ptr<GHSSampler::Bank>> userBanks;      // message thread owns; old ones freed once unused
+    std::atomic<const GHSSampler::Bank*> userBankWanted { nullptr }; // published by the message thread
+    std::atomic<const GHSSampler::Bank*> userBankInUse { nullptr };  // acknowledged by the audio thread
+    std::atomic<bool> audioPickingBank { false };
+    juce::StringArray userSamplePaths;
+    void publishUserBank(std::unique_ptr<GHSSampler::Bank>);
+    struct PendingTrigger { int offset; float velocity; int onsetBack; };
+    std::array<PendingTrigger, 64> pendingTriggers {};
+    int numPendingTriggers = 0;
+
+    // bypass + auto gain + safety
+    juce::AudioParameterBool* bypassParam = nullptr;
+    juce::AudioBuffer<float> dryLine;   // input delayed by the plugin's latency, for bypass and auto gain
+    int dryWritePos = 0;
+    juce::AudioBuffer<float> dryBlock;
+    float bypassMix = 0.0f;              // 0 = processed, 1 = bypassed (ramped)
+    double agInEnergy = 1e-9, agOutEnergy = 1e-9, agLoudDb = -120.0;
+    float agGain = 1.0f;
+    int safetyHold = 0;
 
     juce::SharedResourcePointer<GHSAlign::Registry> alignRegistry;
     GHSAlign::CaptureBuffer alignCapture;
@@ -166,6 +208,19 @@ private:
     std::atomic<float>* pAlignRef = nullptr;
     std::atomic<float>* pAlignGroup = nullptr;
     std::atomic<float>* pAlignPhase = nullptr;
+    std::atomic<float>* pReplaceOn = nullptr;
+    std::atomic<float>* pKit = nullptr;
+    std::atomic<float>* pSampleLevel = nullptr;
+    std::atomic<float>* pOriginalLevel = nullptr;
+    std::atomic<float>* pSampleDyn = nullptr;
+    std::atomic<float>* pSamplePitch = nullptr;
+    std::atomic<float>* pSampleLength = nullptr;
+    std::atomic<float>* pSampleOffset = nullptr;
+    std::atomic<float>* pSampleChoke = nullptr;
+    std::atomic<float>* pAutoGain = nullptr;
+    std::atomic<float>* pSafety = nullptr;
+    std::atomic<float>* pCeiling = nullptr;
+    std::atomic<float>* pLive = nullptr;
     std::atomic<float>* pClip = nullptr;
     std::atomic<float>* pLevelTarget = nullptr;
     std::atomic<float>* pLevel = nullptr;
@@ -216,4 +271,18 @@ namespace GateParamIDs
     inline constexpr const char* alignRef   = "alignReference";
     inline constexpr const char* alignGroup = "alignGroup";
     inline constexpr const char* alignPhase = "alignPhase";
+    inline constexpr const char* replaceOn  = "replaceOn";
+    inline constexpr const char* kit        = "replaceKit";
+    inline constexpr const char* sampleLevel = "sampleLevel";
+    inline constexpr const char* originalLevel = "originalLevel";
+    inline constexpr const char* sampleDyn  = "sampleDynamics";
+    inline constexpr const char* samplePitch = "samplePitch";
+    inline constexpr const char* sampleLength = "sampleLength";
+    inline constexpr const char* sampleOffset = "sampleOffset";
+    inline constexpr const char* sampleChoke = "sampleChoke";
+    inline constexpr const char* autoGain   = "autoGain";
+    inline constexpr const char* bypass     = "bypass";
+    inline constexpr const char* safety     = "safety";
+    inline constexpr const char* ceiling    = "ceiling";
+    inline constexpr const char* live       = "liveMode";
 }

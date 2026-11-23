@@ -156,6 +156,7 @@ struct Settings
     float matchToleranceDb = 4.0f;
     LearnMode learn     = LearnMode::Off;
     bool  triggerFromMidi = false; // gate opens on MIDI notes instead of audio detection
+    bool  liveMode      = false;  // low latency: decide on the first sample over threshold (no 3 ms analysis, no Hit Match)
     bool  gateBypass    = false;  // "Align Only": no gating or hit dynamics, audio just passes (still delayed for alignment)
     GateMode mode       = GateMode::Gate;
     float punchDb       = 0.0f;   // extra gain right at the opening, decays quickly
@@ -174,6 +175,7 @@ struct TriggerEvent
     bool isOpen;       // true = gate opened (a hit), false = gate closed
     float strength;    // 0..1, how hard the hit was (for MIDI velocity)
     bool rejected = false; // a candidate hit that Hit Match turned away (isOpen is false; the gate never opened)
+    int onsetBack = 0;     // opening hits: how many samples before sampleOffset the transient actually began
 };
 
 /** A MIDI note-on used as the trigger source. */
@@ -197,6 +199,9 @@ public:
         delay.assign(size_t(channels + 1), std::vector<float>(size_t(maxDelay), 0.0f)); // +1 = key channel (for key listen)
         crossovers.assign(size_t(channels), Crossover {});
         analysisSamples = std::max(1, int(std::lround(sr * analysisMs / 1000.0)));
+        maxBackSamples = std::min(histSize - 64, int(sr * 0.010));  // look back up to 10 ms
+        quietSamples = std::max(4, int(sr * 0.0005));               // 0.5 ms of quiet marks the start
+        minRehitSamples = int(sr * 0.010);                          // re-hits at least 10 ms apart
         for (size_t b = 0; b < bands.size(); ++b)
             bands[b].setBandPass(sr, fingerprintBandHz[b], 1.4);
         writePos = 0;
@@ -211,6 +216,11 @@ public:
         for (auto& x : crossovers) x.reset();
         envPeak = envRms = envFast = envSlow = 0.0f;
         state = State::Closed;
+        rawHist.fill(0.0f);
+        keyHist.fill(0.0f);
+        histPos = evalStartHist = 0;
+        evalWhileOpen = false;
+        riseArmed = true;
         holdCounter = 0;
         evalCounter = 0;
         midiCountdown = -1;
@@ -226,9 +236,17 @@ public:
     /** Total delay the host must compensate for at the given settings. */
     int latencySamples(const Settings& s) const
     {
-        const int la = std::clamp(int(std::lround(sr * s.lookaheadMs / 1000.0)), 0, maxDelay - analysisSamples - 1);
-        return la + analysisSamples;
+        return lookaheadSamples(s) + windowFor(s);
     }
+
+    /** Just the lookahead part of the latency. */
+    int lookaheadSamples(const Settings& s) const
+    {
+        return std::clamp(int(std::lround(sr * s.lookaheadMs / 1000.0)), 0, maxDelay - analysisSamples - 1);
+    }
+
+    /** Hit analysis window: 3 ms normally, a single sample in Live mode. */
+    int windowFor(const Settings& s) const { return s.liveMode ? 1 : analysisSamples; }
 
     bool gateIsOpen() const { return state == State::Open; }
     float currentGainDb() const { return lastGainDb; }
@@ -305,6 +323,18 @@ public:
             }
             lastKeyDb = levelDb;
 
+            // raw key history, for finding where each transient really began
+            rawHist[size_t(histPos)] = raw;
+            keyHist[size_t(histPos)] = k;
+            const int histNow = histPos;
+            histPos = (histPos + 1) & (histSize - 1);
+
+            // a fresh transient (fast envelope jumping over the slow one), used to
+            // catch a new hit while the gate is still open from the previous one
+            const float riseDb = gainToDb(envFast) - gainToDb(envSlow);
+            if (riseDb < 2.0f) riseArmed = true;
+            const bool newTransient = riseArmed && riseDb > std::max(6.0f, s.transientSensDb) && gainToDb(envFast) > openThr;
+
             // fingerprint bands always run so their state is warm when a hit starts
             float bandOut[numFingerprintBands];
             for (size_t b = 0; b < bands.size(); ++b) bandOut[b] = bands[b].process(raw);
@@ -323,13 +353,13 @@ public:
                 {
                     // Delay by the analysis window so MIDI-triggered openings line
                     // up with the delayed audio exactly like detected ones do.
-                    midiCountdown = analysisSamples;
+                    midiCountdown = windowFor(s);
                     midiVelocity = midi[midiIndex].velocity;
                     ++midiIndex;
                 }
                 if (midiCountdown >= 0 && midiCountdown-- == 0)
                     // no measured peak for a MIDI hit: leveller stays neutral
-                    openGate(i, s, holdSamples, std::clamp(midiVelocity, 0.0f, 1.0f), dbToGain(s.levelTargetDb), onTrigger);
+                    openGate(i, s, holdSamples, std::clamp(midiVelocity, 0.0f, 1.0f), dbToGain(s.levelTargetDb), windowFor(s), onTrigger);
                 else if (state == State::Open)
                 {
                     if (holdCounter > 0) --holdCounter;
@@ -341,35 +371,35 @@ public:
             {
                 case State::Closed:
                     if (onsetCondition && samplesSinceOpen >= guardSamples)
-                    {
-                        state = State::Evaluating;
-                        evalCounter = 0;
-                        evalPeak = 0.0f;
-                        evalLevelDb = levelDb;
-                        bandEnergy.fill(0.0f);
-                    }
+                        beginEvaluation(levelDb, histNow, false);
                     break;
 
                 case State::Evaluating:
                 {
                     evalPeak = std::max(evalPeak, std::fabs(raw));
+                    evalPeakKey = std::max(evalPeakKey, ak);
                     evalLevelDb = std::max(evalLevelDb, levelDb);
                     for (size_t b = 0; b < bands.size(); ++b) bandEnergy[b] += bandOut[b] * bandOut[b];
 
-                    if (++evalCounter >= analysisSamples)
+                    if (++evalCounter >= windowFor(s))
                     {
                         const auto fp = makeFingerprint();
                         lastFingerprint = fp;
                         if (decideHit(fp, s))
                         {
                             const float strength = std::clamp((evalLevelDb - openThr) / 24.0f, 0.0f, 1.0f);
-                            openGate(i, s, holdSamples, strength, evalPeak, onTrigger);
+                            openGate(i, s, holdSamples, strength, evalPeak, evalCounter + findOnsetBack(), onTrigger);
                         }
                         else
                         {
-                            state = State::Rejected; // wait for this sound to fall away before looking again
-                            onTrigger(TriggerEvent { i, false, 0.0f, true });
+                            // a rejected re-hit leaves the gate open on the previous one;
+                            // otherwise wait for this sound to fall away before looking again
+                            state = evalWhileOpen ? State::Open : State::Rejected;
+                            TriggerEvent e { i, false, 0.0f };
+                            e.rejected = true;
+                            onTrigger(e);
                         }
+                        evalWhileOpen = false;
                     }
                     break;
                 }
@@ -379,6 +409,11 @@ public:
                     break;
 
                 case State::Open:
+                    if (newTransient && samplesSinceOpen >= std::max(guardSamples, minRehitSamples))
+                    {
+                        beginEvaluation(levelDb, histNow, true); // a new hit before the last one has died away
+                        break;
+                    }
                     if (levelDb > closeThr)
                         holdCounter = holdSamples;
                     else if (holdCounter > 0)
@@ -391,7 +426,7 @@ public:
             // ---- envelope ----
             if (s.gateBypass)
                 openness = 1.0f;
-            else if (state == State::Open)
+            else if (state == State::Open || (state == State::Evaluating && evalWhileOpen))
                 openness = std::min(1.0f, openness + attackStep);
             else
                 openness *= hitReleaseCoef;
@@ -500,6 +535,7 @@ private:
     bool decideHit(const Fingerprint& fp, const Settings& s)
     {
         lastMatchDistance = hitProfile.valid() ? fingerprintDistance(fp, hitProfile.mean) : -1.0f;
+        if (s.liveMode) { lastHitRejected = false; return true; } // one sample is no fingerprint: Hit Match needs the 3 ms window
 
         if (s.learn == LearnMode::Hits)  { hitProfile.add(fp);   lastHitRejected = false; return true; }
         if (s.learn == LearnMode::Spill) { spillProfile.add(fp); lastHitRejected = true;  return false; }
@@ -517,9 +553,10 @@ private:
     }
 
     template <typename OnTrigger>
-    void openGate(int i, const Settings& s, int holdSamples, float strength, float hitPeak, OnTrigger&& onTrigger)
+    void openGate(int i, const Settings& s, int holdSamples, float strength, float hitPeak, int onsetBack, OnTrigger&& onTrigger)
     {
         state = State::Open;
+        riseArmed = false;
         holdCounter = holdSamples;
         samplesSinceOpen = 0;
         punchEnv = 1.0f;
@@ -547,7 +584,72 @@ private:
             clipCeiling = s.clipDb > 0.01f ? std::max(1.0e-4f, hitPeak * levelGainTarget * dbToGain(-s.clipDb)) : 0.0f;
         }
 
-        onTrigger(TriggerEvent { i, true, strength });
+        TriggerEvent e { i, true, strength };
+        e.onsetBack = onsetBack;
+        onTrigger(e);
+    }
+
+    static constexpr int histSize = 2048; // power of two, > 1.5 x max backtrack + window
+    void beginEvaluation(float levelDb, int histIndex, bool whileOpen)
+    {
+        state = State::Evaluating;
+        evalWhileOpen = whileOpen;
+        evalCounter = 0;
+        evalPeak = 0.0f;
+        evalPeakKey = 0.0f;
+        evalLevelDb = levelDb;
+        evalStartHist = histIndex;
+        bandEnergy.fill(0.0f);
+    }
+
+    /**
+     * The threshold is crossed partway up the attack, and after the key
+     * filters' own delay - so locate where the transient really began.
+     *
+     * On the band-filtered key (the drum the detector is listening for):
+     * measure the background level 10-15 ms before the crossing, then walk
+     * back from the crossing until a 0.5 ms average falls to the background
+     * (x2.5, and at least 20 dB under the hit's peak). That's where the hit
+     * rose out of whatever was already there - silence on a close mic, the
+     * bass in a full mix. Then take off the low-pass filter's known delay.
+     * If it can't be found within 10 ms, keep the crossing.
+     */
+    int findOnsetBack() const
+    {
+        const int f = walkBack(keyHist, evalPeakKey);
+        return f >= 0 ? f + lpfDelaySamples : 0;
+    }
+
+    int walkBack(const std::array<float, histSize>& hist, float peak) const
+    {
+        if (peak <= 0.0f) return -1;
+        auto at = [&](int back) { return std::fabs(hist[size_t((evalStartHist - back) & (histSize - 1))]); };
+
+        // Walk back along a 0.5 ms average of |key| to the valley the hit rose
+        // out of: stop once it's 20 dB under the peak (a clean track), or once
+        // it starts climbing again past the lowest point (a busy one - the
+        // previous note or the bass), and return that lowest point.
+        const float floorThr = 0.1f * peak;
+        double sum = 0.0;
+        for (int j = 0; j < quietSamples; ++j) sum += at(j);
+        double best = 1e30;
+        int bestJ = -1, j50 = -1;
+        for (int j = 0; j < maxBackSamples; ++j)
+        {
+            const double m = sum / quietSamples;
+            if (j50 < 0 && m < 0.5 * peak) j50 = j;
+            if (m < floorThr)
+            {
+                // A low-passed key rises slowly, so its 10% point is still well
+                // after the start: extend the 50% -> 10% slope down to zero.
+                const int extra = j50 >= 0 ? (j - j50) / 4 : 0;
+                return std::min(maxBackSamples, j + extra);
+            }
+            if (m < best) { best = m; bestJ = j; }
+            else if (m > best * 1.6 && m > 0.15 * peak) return bestJ; // climbing out of the valley
+            sum += at(j + quietSamples) - at(j);
+        }
+        return bestJ;
     }
 
     template <typename OnTrigger>
@@ -574,7 +676,12 @@ private:
     {
         auto changed = [this](float a, float b) { return ! lastSettingsValid || std::fabs(a - b) > 1.0e-3f; };
         if (changed(s.keyHpfHz, last.keyHpfHz)) hpf.setHighPass(sr, s.keyHpfHz);
-        if (changed(s.keyLpfHz, last.keyLpfHz)) lpf.setLowPass(sr, s.keyLpfHz);
+        if (changed(s.keyLpfHz, last.keyLpfHz))
+        {
+            lpf.setLowPass(sr, s.keyLpfHz);
+            // 2nd-order Butterworth low-pass: group delay near DC = sqrt(2) / (2 pi fc)
+            lpfDelaySamples = s.keyLpfHz < sr * 0.2 ? int(std::lround(sr * 1.41421356 / (2.0 * M_PI * s.keyLpfHz))) : 0;
+        }
         if (changed(s.crossoverHz, last.crossoverHz))
             for (auto& x : crossovers) x.setFrequency(sr, s.crossoverHz);
 
@@ -611,6 +718,13 @@ private:
     float envPeak = 0, envRms = 0, envFast = 0, envSlow = 0;
     float peakRelCoef = 0, rmsCoef = 0, fastAttCoef = 0, fastRelCoef = 0, slowAttCoef = 0, slowRelCoef = 0;
     float attackStep = 1, hitReleaseCoef = 0, punchCoef = 0, levelSmoothCoef = 1;
+
+    std::array<float, histSize> rawHist {}, keyHist {};
+    float evalPeakKey = 0.0f;
+    int lpfDelaySamples = 0; // the key low-pass's low-frequency group delay
+    int histPos = 0, evalStartHist = 0;
+    int maxBackSamples = 480, quietSamples = 24, minRehitSamples = 480;
+    bool evalWhileOpen = false, riseArmed = true;
 
     State state = State::Closed;
     int holdCounter = 0;

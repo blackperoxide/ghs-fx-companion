@@ -85,8 +85,62 @@ Match rejected, and the bar on the right is the current gain.
 deciding), reported to the host so it's compensated automatically.
 
 **Factory presets:** Init, Kick - Tight, Snare - Bleed Killer, Toms - Natural Ring, Hi-Hat - Clean,
-Snare - Two-Band Natural, Snare - Punch & Clip, Overheads - Align Only, Room - Duck on Kick,
-Kick - MIDI Trigger.
+Snare - Two-Band Natural, Snare - Punch & Clip, Kick - Replace (Synth Kick), Kick - Reinforce in a Mix,
+Snare - Reinforce (Synth Snare), Overheads - Align Only, Room - Duck on Kick, Kick - MIDI Trigger.
+
+## Replace: drum replacement and reinforcement
+
+![Replace tab](screenshot-replace.png)
+
+Every hit the gate accepts can fire a one-shot sample, either replacing the original or layered
+under it. Hits found by detection, Hit Match and MIDI triggering all work.
+
+| Control | What it does |
+|---|---|
+| Replace / Add Samples | Turns the sampler on. |
+| Kit | Synth Kick / Snare / Tom / Clap (built-in starter sounds: 3 velocity layers x 2 round-robins each), or User Samples. |
+| Load Samples... / drop files | Load your own one-shots (WAV, AIFF, FLAC, Ogg, MP3), or a whole folder of them. They're sorted into **velocity layers automatically by loudness**. Files within 1.5 dB of each other become **round-robins**, and the same sample never plays twice in a row. Each file's silent lead-in is trimmed so its transient is what lines up. Up to 64 files and 10 s each. File paths are saved with the session. |
+| Sample | Sample level (-inf to +12 dB). |
+| Original | Level of the (gated) original under the samples. -inf = full replacement. |
+| Dynamics | How much the sample's level follows the hit's velocity: 0% = every hit the same, 100% = 36 dB of range. The velocity always picks the layer. |
+| Pitch | ±12 semitones. |
+| Length | Shortens the samples with a fade (5-100%). |
+| Offset | Nudges the samples against the original (±10 ms). |
+| Choke | A new hit fades out the previous sample within 4 ms, like a real drum. Off = they ring over each other. |
+
+**Timing.** The threshold is crossed partway up each attack, and later still through a narrow
+key filter. So for every accepted hit the gate traces back to where the transient really began:
+it finds where the band-filtered key rose out of whatever was there before (silence on a close
+mic, the bass in a mix), extrapolates the attack slope to zero, and corrects for the key filter's
+delay. The sample starts there, using the **Lookahead** to start before the hit is even
+detected. Raise the Lookahead if samples come in late with a very low key filter or a negative
+Offset. Hits that arrive while the gate is still open from the previous hit also trigger (fills,
+flams past the Retrigger time).
+
+Tested on a full mix (`Set_4`, preset *Kick - Reinforce in a Mix*): all 20 kicks triggered, none
+missed, no false triggers. Sample timing is consistent to ±0.1 ms hit to hit, and the preset's
+Offset centres it on the kicks. On a dense master with an 808 under everything there is no
+separate kick to find, so use the drum stems.
+
+## Global switches (header)
+
+| Switch | What it does |
+|---|---|
+| **Bypass** | The host's bypass too. Plays the input untouched but **still delayed by the plugin's latency**, so nothing jumps in time when you A/B, with a 10 ms crossfade. Verified to null against the input (-138 dBFS). |
+| **Auto Gain** | Matches the processed level to the input level so A/B comparisons are fair. Measured only on the loud parts (the hits, not the gaps) over about 3 s, within ±18 dB. The button shows the gain it's applying. |
+| **Live** | Lowest latency: decides on the first sample over the threshold instead of the 3 ms analysis window (Hit Match needs that window, so it's off in Live). With Lookahead 0 and Align off, the plugin's latency is **1 sample**. |
+| **Safety + Ceiling** | A soft ceiling on the output (default -0.3 dBFS, range -12 to 0) that nothing gets past. The button shows **Safety !** while it's catching peaks. |
+
+**32-bit float and clipping:** everything inside the plugin (and between plugins in your DAW)
+is 32-bit float, so the signal can go far above 0 dBFS without clipping: adding samples on top of
+a loud track won't distort *inside* the session. But the moment audio leaves the computer (your
+interface's converter, a live console, an exported 24-bit file) anything above 0 dBFS clips.
+Float doesn't protect you there. That's what Safety is for, and it's on by default. In testing,
+reinforcing Set_4's kicks pushed the plugin's output to +0.22 dBFS (it clipped when written to a
+24-bit file). With Safety on, the peak stayed under the ceiling.
+
+**For live use:** turn on Live, set Lookahead to 0 (or 1-2 ms if your rig allows), and leave
+Align off (Align adds about 10 ms on purpose). Leave Safety on.
 
 ## Align: time, polarity and phase across the whole kit
 
@@ -159,11 +213,17 @@ sub-sample lag estimation in both directions, out-of-range detection, polarity, 
 a realistic kit with bleed (kick, snare top and flipped snare bottom against the overheads, in
 both modes), and the realtime aligner.
 
+`Tests/SamplerTest.cpp` checks the replacer: automatic layering and round-robin, lead-in
+trimming, sample-accurate scheduling across block sizes, the velocity/dynamics law, pitch and
+sample-rate conversion, choke, length fades, the built-in kits (finite, under 0 dBFS, at least 3
+layers), and voice stealing. `GateDSPTest` also covers Live mode, locating hit onsets (within
+0.5 ms even through a 150 Hz key filter), re-hits while the gate is open, and Align Only.
+
 `Tests/AlignE2ETest.cpp` runs four real plugin instances on a synthetic kit with known mic
 distances and a fake host playhead. It presses Analyse through the shared registry, then checks
 that every instance's output really lines up with the overheads afterwards.
 
 ```
-cmake --build build-gate --target GHSDrumGateDSPTest GHSDrumGateAlignTest GHSDrumGateAlignE2E
+cmake --build build-gate --target GHSDrumGateDSPTest GHSDrumGateSamplerTest GHSDrumGateAlignTest GHSDrumGateAlignE2E
 cd build-gate && ctest --output-on-failure
 ```
