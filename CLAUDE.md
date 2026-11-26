@@ -1,5 +1,23 @@
 # Handoff: GHS FX Companion
 
+## Newest work: Voice tab, voice-to-MIDI (branch `ghs-studio-full`, 2026-11-26)
+Real-time voice-to-MIDI: sing/hum a melody, it drives one chosen Rack slot's hosted
+instrument/sampler directly - no external virtual MIDI port, no DAW routing, unlike
+Dubler 2. Melody mode only (v1); vocal-percussion rhythm mode (trainable hit
+classification) is a separate, later v2, not started or scaffolded. See
+`Source/VoiceEngine.h/.cpp` - reuses `RiffHouse::decimate`/`rmsOf`/`detectPitchYin`
+(now externally linked, were anonymous-namespace-private to RiffHouseEngine.cpp) and
+`Visuals::Engine`'s fast/slow envelope-follower idiom for note onset/offset.
+Built and syntax-reviewed line-by-line against the real surrounding code (no vendored
+JUCE checkout in this sandbox, so **not compiled here**). NOT verified: actual AU/VST3
+build (`BinaryData::voice_js`/`voice_css` symbol names are inferred from the existing
+hyphen-stripping behavior, not confirmed by a real build), real microphone input against
+the chosen gate (0.0015-0.012 RMS)/clarity (0.72) thresholds, any DAW/Logic host test of
+the new `voiceEnabled`/`voiceSensitivity` parameters or the modified rack `processBlock`
+loop. First job when Shawn is home: `./rebuild.sh`, then the Voice tab's own verification
+steps in `/root/.claude/plans/valiant-seeking-meadow.md` (load any sampler into a Rack
+slot, pick it as Voice's target, sing/hum, confirm it plays with zero extra MIDI routing).
+
 ## Combined branch: `ghs-studio-full` (2026-11-09)
 Shawn asked for Riff House and GHS FX Companion to be one full branch. `ghs-studio-full` =
 `console1-controller` (which already contained riffhouse -> riffhouse-routine -> studio-launchpad,
