@@ -7,6 +7,7 @@
 #include "RiffHouseEngine.h"
 #include "VisualsEngine.h"
 #include "Console1Engine.h"
+#include "VoiceEngine.h"
 
 /**
  * Milestone 2: this processor hosts a bounded rack of third-party plugins in
@@ -133,12 +134,21 @@ public:
     /** Console 1 / hardware controller mapping onto hosted plugins (see Console1Engine.h). */
     Console1::Engine& getConsole1() { return *console1; }
 
+    /** Voice-to-MIDI (see VoiceEngine.h): sings/hums drive one chosen Rack slot's instrument. */
+    Voice::Engine& getVoice() { return voice; }
+    juce::AudioParameterBool* getVoiceEnabledParameter() const { return voiceEnabledParam; }
+    juce::AudioParameterFloat* getVoiceSensitivityParameter() const { return voiceSensitivityParam; }
+
 private:
     RiffHouse::Engine riffHouse;
     Visuals::Engine visuals;
     juce::AudioParameterFloat* visualIntensityParam = nullptr;
     juce::AudioParameterChoice* visualPaletteParam = nullptr;
     juce::AudioParameterChoice* visualSceneParam = nullptr;
+
+    Voice::Engine voice;
+    juce::AudioParameterBool* voiceEnabledParam = nullptr;
+    juce::AudioParameterFloat* voiceSensitivityParam = nullptr;
 
     /** Same shape used by getStateInformation and by named presets - built once, serialized two ways. */
     juce::ValueTree chainStateToValueTree();

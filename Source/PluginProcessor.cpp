@@ -38,6 +38,11 @@ GHSFXCompanionProcessor::GHSFXCompanionProcessor()
         { "visualScene", 1 }, "Visual Scene",
         juce::StringArray { "Bars", "Radial", "Scope" }, 0));
 
+    addParameter(voiceEnabledParam = new juce::AudioParameterBool(
+        { "voiceEnabled", 1 }, "Voice Enabled", false));
+    addParameter(voiceSensitivityParam = new juce::AudioParameterFloat(
+        { "voiceSensitivity", 1 }, "Voice Sensitivity", 0.0f, 1.0f, 0.5f));
+
     Console1::Engine::Host c1Host;
     c1Host.numSlots = maxChainSlots;
     c1Host.pluginInSlot = [this](int s) { return isValidSlot(s) ? chain[(size_t) s].plugin.get() : nullptr; };
@@ -59,6 +64,7 @@ void GHSFXCompanionProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     toneRecorder.prepare(sampleRate, juce::jmax(1, getMainBusNumInputChannels()));
     riffHouse.prepare(sampleRate, samplesPerBlock);
     visuals.prepare(sampleRate, samplesPerBlock);
+    voice.prepare(sampleRate, samplesPerBlock, maxChainSlots);
 
     for (auto& slot : chain)
     {
@@ -105,12 +111,34 @@ void GHSFXCompanionProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     riffHouse.processInput(buffer, midiMessages);
 
+    // Voice-to-MIDI: tracks pitch pre-rack, same point RiffHouse analyses input,
+    // and hands back whatever notes it decided on since the last block.
+    voice.processInput(buffer, voiceEnabledParam->get(), voiceSensitivityParam->get());
+    juce::MidiBuffer voiceMidi;
+    voice.drainPendingMidiInto(voiceMidi);
+    const int voiceTarget = voice.getTargetSlot();
+
     // Same buffer threaded through every non-empty, non-bypassed slot in order -
     // that's the whole chain. Empty slots and bypassed slots are transparent.
-    for (auto& slot : chain)
+    // The slot Voice targets also gets Voice's generated notes merged on top of
+    // whatever MIDI it already receives - every other slot is untouched.
+    for (int i = 0; i < maxChainSlots; ++i)
     {
-        if (slot.plugin != nullptr && !slot.bypassParam->get())
+        auto& slot = chain[(size_t) i];
+        if (slot.plugin == nullptr || slot.bypassParam->get())
+            continue;
+
+        if (i == voiceTarget && voiceMidi.getNumEvents() > 0)
+        {
+            juce::MidiBuffer merged;
+            merged.addEvents(midiMessages, 0, buffer.getNumSamples(), 0);
+            merged.addEvents(voiceMidi, 0, buffer.getNumSamples(), 0);
+            slot.plugin->processBlock(buffer, merged);
+        }
+        else
+        {
             slot.plugin->processBlock(buffer, midiMessages);
+        }
     }
 
     // Monitoring through Apollo Console (Unison / zero latency)? Then the DAW must not
@@ -298,6 +326,10 @@ juce::ValueTree GHSFXCompanionProcessor::chainStateToValueTree()
     console1State.setProperty("json", juce::JSON::toString(console1->toVar()), nullptr);
     state.addChild(console1State, -1, nullptr);
 
+    juce::ValueTree voiceState("VoiceState");
+    voiceState.setProperty("json", juce::JSON::toString(voice.toVar()), nullptr);
+    state.addChild(voiceState, -1, nullptr);
+
     return state;
 }
 
@@ -325,6 +357,9 @@ void GHSFXCompanionProcessor::applyChainStateValueTree(const juce::ValueTree& st
     const bool hasConsole1State = console1State.isValid();
     if (hasConsole1State)
         console1->fromVar(juce::JSON::parse(console1State.getProperty("json", "{}").toString()));
+
+    if (const auto voiceState = state.getChildWithName("VoiceState"); voiceState.isValid())
+        voice.fromVar(juce::JSON::parse(voiceState.getProperty("json", "{}").toString()));
 
     auto known = loadKnownPlugins();
 

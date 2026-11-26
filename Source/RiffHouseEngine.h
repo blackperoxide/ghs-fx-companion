@@ -35,6 +35,10 @@ namespace RiffHouse
     /** YIN pitch estimate in Hz (0 if unvoiced). clarity is 1 - aperiodicity (0..1). */
     float detectPitchYin(const float* x, int n, double sampleRate, float& clarity, float minHz = 38.0f, float maxHz = 1400.0f);
 
+    /** Box-filter decimation to ~12 kHz - shared with Voice::Engine's live pitch path. */
+    std::vector<float> decimate(const float* x, int n, double sampleRate, double& outSampleRate);
+    float rmsOf(const float* x, int n);
+
     /** WSOLA time-stretch. rate < 1 = slower, pitch unchanged. */
     juce::AudioBuffer<float> timeStretch(const juce::AudioBuffer<float>& in, double rate);
 

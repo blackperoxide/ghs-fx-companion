@@ -60,6 +60,7 @@ target_sources(GHSFXCompanion PRIVATE
     Source/StudioEngine.cpp
     Source/VisualsEngine.cpp
     Source/Console1Engine.cpp
+    Source/VoiceEngine.cpp
 )
 
 # plugin_database.json: the same categorized real-plugin database the
@@ -94,6 +95,8 @@ juce_add_binary_data(GHSFXCompanionData
         Resources/webui/console1.js
         Resources/webui/console1-automap.js
         Resources/webui/console1.css
+        Resources/webui/voice.js
+        Resources/webui/voice.css
 )
 
 target_compile_definitions(GHSFXCompanion PUBLIC

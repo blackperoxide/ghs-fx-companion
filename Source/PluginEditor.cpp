@@ -116,6 +116,7 @@ GHSFXCompanionEditor::GHSFXCompanionEditor(GHSFXCompanionProcessor& p)
     addStudioFunctions(options);
     addVisualsFunctions(options);
     addConsole1Functions(options);
+    addVoiceFunctions(options);
 
     webView = std::make_unique<SinglePageBrowser>(options);
     addAndMakeVisible(*webView);
@@ -159,6 +160,7 @@ void GHSFXCompanionEditor::timerCallback()
         *ghsProcessor.getVisualSceneParameter() = pending;
     webView->emitEventIfBrowserIsVisible("vzLive", ghsProcessor.getVisuals().getLiveState());
     webView->emitEventIfBrowserIsVisible("c1Live", ghsProcessor.getConsole1().getLiveState());
+    webView->emitEventIfBrowserIsVisible("voiceLive", ghsProcessor.getVoice().getLiveState());
 
     if (!ghsProcessor.isCapturingTone() || ++toneTickDivider % 6 != 0)
         return;
@@ -204,6 +206,10 @@ std::optional<juce::WebBrowserComponent::Resource> GHSFXCompanionEditor::getReso
         return makeResource(BinaryData::console1automap_js, BinaryData::console1automap_jsSize, "text/javascript");
     if (path == "console1.css")
         return makeResource(BinaryData::console1_css, BinaryData::console1_cssSize, "text/css");
+    if (path == "voice.js")
+        return makeResource(BinaryData::voice_js, BinaryData::voice_jsSize, "text/javascript");
+    if (path == "voice.css")
+        return makeResource(BinaryData::voice_css, BinaryData::voice_cssSize, "text/css");
 
     return std::nullopt;
 }
@@ -805,4 +811,56 @@ juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addConsole1Functions(j
                 done({});
             });
     return options;
+}
+
+// ============================== Voice ======================================
+
+juce::WebBrowserComponent::Options& GHSFXCompanionEditor::addVoiceFunctions(juce::WebBrowserComponent::Options& options)
+{
+    using Args = const juce::Array<juce::var>&;
+    using Done = juce::WebBrowserComponent::NativeFunctionCompletion;
+
+    options = options
+        .withNativeFunction("vcGetParams", [this](Args, Done done) { done(handleVcGetParams()); })
+        .withNativeFunction("vcSetParam", [this](Args a, Done done) { handleVcSetParam(a); done({}); })
+        .withNativeFunction("vcSetTargetSlot", [this](Args a, Done done) { handleVcSetTargetSlot(a); done({}); });
+    return options;
+}
+
+juce::var GHSFXCompanionEditor::handleVcGetParams()
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty("enabled", ghsProcessor.getVoiceEnabledParameter()->get());
+    o->setProperty("sensitivity", (double) ghsProcessor.getVoiceSensitivityParameter()->get());
+    o->setProperty("targetSlot", ghsProcessor.getVoice().getTargetSlot());
+    o->setProperty("midiChannel", ghsProcessor.getVoice().getMidiChannel());
+
+    juce::Array<juce::var> slots;
+    for (int i = 0; i < GHSFXCompanionProcessor::maxChainSlots; ++i)
+    {
+        auto* s = new juce::DynamicObject();
+        s->setProperty("index", i);
+        if (auto* p = ghsProcessor.getPluginInSlot(i))
+            s->setProperty("name", p->getName());
+        else
+            s->setProperty("name", juce::var());
+        slots.add(juce::var(s));
+    }
+    o->setProperty("slots", slots);
+    return juce::var(o);
+}
+
+void GHSFXCompanionEditor::handleVcSetParam(const juce::Array<juce::var>& args)
+{
+    if (args.size() < 2) return;
+    const auto name = args[0].toString();
+    if (name == "enabled") *ghsProcessor.getVoiceEnabledParameter() = (bool) args[1];
+    else if (name == "sensitivity") *ghsProcessor.getVoiceSensitivityParameter() = (float) (double) args[1];
+    else if (name == "midiChannel") ghsProcessor.getVoice().setMidiChannel((int) args[1]);
+}
+
+void GHSFXCompanionEditor::handleVcSetTargetSlot(const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1) return;
+    ghsProcessor.getVoice().setTargetSlot((int) args[0]);
 }

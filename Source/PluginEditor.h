@@ -63,6 +63,10 @@ private:
     void handleVzEnterFullscreen();
     void handleVzExitFullscreen();
 
+    juce::var handleVcGetParams();
+    void handleVcSetParam(const juce::Array<juce::var>& args);
+    void handleVcSetTargetSlot(const juce::Array<juce::var>& args);
+
     const juce::PluginDescription* findKnownPluginByIdentifier(const juce::String& identifier);
     void emitToast(const juce::String& text, const juce::String& tone = "info");
 
@@ -134,6 +138,7 @@ private:
     juce::WebBrowserComponent::Options& addStudioFunctions(juce::WebBrowserComponent::Options& options);
     juce::WebBrowserComponent::Options& addVisualsFunctions(juce::WebBrowserComponent::Options& options);
     juce::WebBrowserComponent::Options& addConsole1Functions(juce::WebBrowserComponent::Options& options);
+    juce::WebBrowserComponent::Options& addVoiceFunctions(juce::WebBrowserComponent::Options& options);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GHSFXCompanionEditor)
 };

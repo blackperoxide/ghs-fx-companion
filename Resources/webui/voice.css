@@ -1,0 +1,74 @@
+/* ============================================================
+   Voice - real-time voice-to-MIDI tab inside GHS FX Companion.
+   Reuses the base palette from style.css, same scale as visuals.css.
+   ============================================================ */
+
+#vcRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px;
+  gap: 12px;
+}
+
+.vc-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  flex: 0 0 auto;
+}
+.vc-controls label { font-size: 11.5px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.vc-controls input[type="range"] { width: 110px; }
+.vc-controls input[type="number"] { width: 48px; }
+.vc-controls select { min-width: 140px; }
+
+.vc-toggle { font-weight: 600; color: var(--text); }
+
+.vc-readout {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  flex: 0 0 auto;
+}
+
+.vc-note {
+  font-size: 40px;
+  font-weight: 700;
+  min-width: 90px;
+  color: var(--accent);
+}
+
+.vc-meters { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; }
+.vc-meters label { font-size: 11.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; }
+
+.vc-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.vc-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+.vc-note-help {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  max-width: 640px;
+  line-height: 1.5;
+}

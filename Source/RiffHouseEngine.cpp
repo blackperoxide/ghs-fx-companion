@@ -30,28 +30,28 @@ namespace
     }
 
     juce::String stamp() { return juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S"); }
+}
 
-    /** Box-filter decimation to roughly 12 kHz - enough for pitch up to ~1.4 kHz, ~16x cheaper YIN. */
-    std::vector<float> decimate(const float* x, int n, double sr, double& outSr)
+/** Box-filter decimation to roughly 12 kHz - enough for pitch up to ~1.4 kHz, ~16x cheaper YIN. */
+std::vector<float> decimate(const float* x, int n, double sr, double& outSr)
+{
+    const int d = juce::jmax(1, (int) std::round(sr / 12000.0));
+    outSr = sr / d;
+    std::vector<float> y((size_t) (n / d));
+    for (size_t i = 0; i < y.size(); ++i)
     {
-        const int d = juce::jmax(1, (int) std::round(sr / 12000.0));
-        outSr = sr / d;
-        std::vector<float> y((size_t) (n / d));
-        for (size_t i = 0; i < y.size(); ++i)
-        {
-            float acc = 0;
-            for (int k = 0; k < d; ++k) acc += x[i * (size_t) d + (size_t) k];
-            y[i] = acc / (float) d;
-        }
-        return y;
+        float acc = 0;
+        for (int k = 0; k < d; ++k) acc += x[i * (size_t) d + (size_t) k];
+        y[i] = acc / (float) d;
     }
+    return y;
+}
 
-    float rmsOf(const float* x, int n)
-    {
-        double a = 0;
-        for (int i = 0; i < n; ++i) a += (double) x[i] * x[i];
-        return n > 0 ? (float) std::sqrt(a / n) : 0.0f;
-    }
+float rmsOf(const float* x, int n)
+{
+    double a = 0;
+    for (int i = 0; i < n; ++i) a += (double) x[i] * x[i];
+    return n > 0 ? (float) std::sqrt(a / n) : 0.0f;
 }
 
 // ============================================================ YIN

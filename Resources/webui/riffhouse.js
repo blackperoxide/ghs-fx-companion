@@ -69,6 +69,7 @@
       { nav: "navRiffHouse", view: "view-riffhouse" },
       { nav: "navVisuals", view: "view-visuals" },
       { nav: "navConsole1", view: "view-console1" },
+      { nav: "navVoice", view: "view-voice" },
     ];
     function show(viewId) {
       tabs.forEach((t) => {
@@ -79,6 +80,7 @@
       if (viewId === "view-riffhouse") requestAnimationFrame(resizeCanvases);
       if (viewId === "view-visuals" && window.VZ) requestAnimationFrame(window.VZ.resize);
       if (viewId === "view-console1" && window.C1) window.C1.onShow();
+      if (viewId === "view-voice" && window.VC) window.VC.onShow();
     }
     tabs.forEach((t) => document.getElementById(t.nav).addEventListener("click", () => show(t.view)));
   }
