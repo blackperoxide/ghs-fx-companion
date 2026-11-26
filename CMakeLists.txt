@@ -23,6 +23,9 @@ juce_add_plugin(GHSFXCompanion
     PLUGIN_MANUFACTURER_CODE Ghst
     PLUGIN_CODE Ghs1
     FORMATS VST3 AU Standalone
+    # Hand-painted artwork, cropped/squared from a photo - drives the
+    # Standalone app's macOS .icns (and the AU/VST3 bundle icon) at build time.
+    ICON_BIG Resources/icon.png
     # Without this, every rebuild only updates the copy inside build/ - Logic
     # never sees it and keeps running whatever was last copied to the system
     # plugin folders by hand.
